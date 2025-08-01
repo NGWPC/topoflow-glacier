@@ -1,0 +1,9 @@
+--
+This file contains the glacier module of the Topoflow routing framework to be used in the NextGen Modeling framework. Credit to the authors of:
+- https://github.com/peckhams/topoflow36
+
+This code is made available under an MIT License
+
+Citation:
+Peckham, S. D., M. Stoica, E. Jafarov,A. Endalamaw, and W. R. Bolton (2017),Reproducible, component-basedmodeling with TopoFlow, a spatialhydrologic modeling toolkit, Earthand Space Science, 4, 377–394,doi:10.1002/2016ea000237.
+--
