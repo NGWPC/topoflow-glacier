@@ -1,6 +1,11 @@
 # Topoflow-glacier
 
-Running the glacier module from topoflow
+<figure>
+  <img src="docs/img/wolvp2.gif" alt="Wolverine, AK" width="700" />
+  <figcaption><strong>Figure 1.</strong> Wolverine glacier weather station, Alaska.</figcaption>
+</figure>
+
+## Running the glacier module from topoflow
 
 ### Getting Started
 This repo is managed through [UV](https://docs.astral.sh/uv/getting-started/installation/) and can be installed through:

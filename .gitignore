@@ -196,3 +196,5 @@ crash.log
 
 # Terraform plan output (optional unless you want to inspect later)
 *.tfplan
+
+src/topoflow-glacier/_version.py
