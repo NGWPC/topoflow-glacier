@@ -7,3 +7,7 @@ This code is made available under an MIT License
 Citation:
 Peckham, S. D., M. Stoica, E. Jafarov,A. Endalamaw, and W. R. Bolton (2017),Reproducible, component-basedmodeling with TopoFlow, a spatialhydrologic modeling toolkit, Earthand Space Science, 4, 377–394,doi:10.1002/2016ea000237.
 --
+
+This file is based on the hydrofabric_fixes branch of the https://github.com/NOAA-OWP/topoflow repo. Credit to Lauren Bolotin and all authors
+
+--
