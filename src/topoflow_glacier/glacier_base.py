@@ -82,8 +82,10 @@ See glacier_degree_day.py and glacier_energy_balance.py.
 
 import numpy as np
 
+from topoflow_glacier import BMI_base
+
 # from topoflow.utils import model_input  # (not used here)
-from topoflow.utils import BMI_base, model_output
+# from topoflow_glacier import model_output
 
 
 # -----------------------------------------------------------------------

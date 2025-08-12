@@ -46,8 +46,8 @@ functions.  It inherits from the glacier "base class" in
 # -----------------------------------------------------------------------
 
 import numpy as np
-from topoflow.components import glacier_base
-from topoflow.utils import model_input
+
+from topoflow_glacier import glacier_base, model_input
 
 
 # -----------------------------------------------------------------------

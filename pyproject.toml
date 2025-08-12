@@ -4,10 +4,13 @@ requires = ["hatchling", "hatch-vcs"]
 
 [tool.hatch]
 version.source = "vcs"
-build.hooks.vcs.version-file = "src/topoflow-glacier/_version.py"
+build.hooks.vcs.version-file = "src/topoflow_glacier/_version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["srctopoflow-glacier", "tools"]
+packages = [
+  "src/topoflow_glacier",
+  "tools"
+]
 
 [project]
 name = "topoflow-glacier"
@@ -26,9 +29,12 @@ maintainers = [
 ]
 
 dependencies = [
+  "numpy>=2.3.2",
   "python-dotenv==1.1.0",
   "pandas==2.3.1",
 ]
+
+
 
 [project.optional-dependencies]
 docs = [
