@@ -1110,8 +1110,8 @@ class met_component(BMI_base.BMI_component):
         # ------------------------------------------------
         # Note: Maybe put these into read_input_files()
         # ------------------------------------------------
-        self.slope_grid_file = self.topo_directory + self.slope_grid_file
-        self.aspect_grid_file = self.topo_directory + self.aspect_grid_file
+        # self.slope_grid_file = self.topo_directory + self.slope_grid_file
+        # self.aspect_grid_file = self.topo_directory + self.aspect_grid_file
         self.set_slope_angle()
         self.set_aspect_angle()
 
@@ -1970,58 +1970,58 @@ class met_component(BMI_base.BMI_component):
     #   update_julian_day()
     # -------------------------------------------------------------------
     def update_albedo(self, method="aging"):
-        # Only use this routine if time varying albedo is not supplied as an input:
-        if (self.albedo_type.lower() == "scalar") or (self.albedo_type.lower() == "grid"):
-            if method == "aging":
-                albedo = self.albedo
-                # ------------------------------------------------
-                # Dynamic albedo accounting for aging snow
-                # ------------------------------------------------
-                # (Rohrer and Braun 1994): alpha = alpha0 + K * e^(-nr)
-                # alpha = albedo
-                # alpha0 = minimum snowpack albedo (~0.4)
-                # K = constant (~0.44)
-                # n = number of days since last major snowfall, at least 3 cm over 3 days
-                # r = recession coefficient = 0.05 for temperatures < than
-                # 0 deg C, 0.12 for temperatures > 0 deg C
-                # ------------------------------------------------
-                r = np.where((self.T_air > 0), 0.12, 0.05)
-                K = 0.44
-                alpha0 = 0.4
+        # # Only use this routine if time varying albedo is not supplied as an input:
+        # if (self.albedo_type.lower() == "scalar") or (self.albedo_type.lower() == "grid"):
+        if method == "aging":
+            albedo = self.albedo
+            # ------------------------------------------------
+            # Dynamic albedo accounting for aging snow
+            # ------------------------------------------------
+            # (Rohrer and Braun 1994): alpha = alpha0 + K * e^(-nr)
+            # alpha = albedo
+            # alpha0 = minimum snowpack albedo (~0.4)
+            # K = constant (~0.44)
+            # n = number of days since last major snowfall, at least 3 cm over 3 days
+            # r = recession coefficient = 0.05 for temperatures < than
+            # 0 deg C, 0.12 for temperatures > 0 deg C
+            # ------------------------------------------------
+            r = np.where((self.T_air > 0), 0.12, 0.05)
+            K = 0.44
+            alpha0 = 0.4
 
-                self.P_snow_3day_grid = np.roll(
-                    self.P_snow_3day_grid, -1, axis=0
-                )  # you can roll on different axes (time axis), shape of the DEM and time axis and roll on the time axis
-                ws_density_ratio = self.rho_H2O / self.rho_snow
-                self.P_snow_3day_grid[np.size(self.P_snow_3day_grid, axis=0) - 1] = (
-                    self.P_snow * self.dt * ws_density_ratio
-                )
+            self.P_snow_3day_grid = np.roll(
+                self.P_snow_3day_grid, -1, axis=0
+            )  # you can roll on different axes (time axis), shape of the DEM and time axis and roll on the time axis
+            ws_density_ratio = self.rho_H2O / self.rho_snow
+            self.P_snow_3day_grid[np.size(self.P_snow_3day_grid, axis=0) - 1] = (
+                self.P_snow * self.dt * ws_density_ratio
+            )
 
-                P_snow_3day_grid_total = np.sum(
-                    self.P_snow_3day_grid, axis=0
-                )  # maybe multipy by timestep here # also make sure to only sum over time axis
-                # self.P_snow_3day_grid_total = P_snow_3day_grid_total # if you want to output and make sure it's working properly
+            P_snow_3day_grid_total = np.sum(
+                self.P_snow_3day_grid, axis=0
+            )  # maybe multipy by timestep here # also make sure to only sum over time axis
+            # self.P_snow_3day_grid_total = P_snow_3day_grid_total # if you want to output and make sure it's working properly
 
-                self.n = np.where((P_snow_3day_grid_total >= 0.03), 0, self.n)
-                self.n = np.where((P_snow_3day_grid_total < 0.03), self.n + self.days_per_dt, self.n)
-                snow_albedo = alpha0 + K * np.exp(-self.n * r)
+            self.n = np.where((P_snow_3day_grid_total >= 0.03), 0, self.n)
+            self.n = np.where((P_snow_3day_grid_total < 0.03), self.n + self.days_per_dt, self.n)
+            snow_albedo = alpha0 + K * np.exp(-self.n * r)
 
-                albedo = np.where(
-                    (self.h_snow > 0),  # where snow exists
-                    snow_albedo,
-                    albedo,
-                )
-                albedo = np.where(
-                    ((self.h_snow == 0) & (self.h_ice > 0)),  # where ice exists without snow
-                    np.float64(0.3),
-                    albedo,
-                )
-                albedo = np.where(
-                    ((self.h_snow == 0) & (self.h_ice == 0)),  # where there is no snow or ice (tundra)
-                    np.float64(0.15),
-                    albedo,
-                )
-                self.albedo = albedo
+            albedo = np.where(
+                (self.h_snow > 0),  # where snow exists
+                snow_albedo,
+                albedo,
+            )
+            albedo = np.where(
+                ((self.h_snow == 0) & (self.h_ice > 0)),  # where ice exists without snow
+                np.float64(0.3),
+                albedo,
+            )
+            albedo = np.where(
+                ((self.h_snow == 0) & (self.h_ice == 0)),  # where there is no snow or ice (tundra)
+                np.float64(0.15),
+                albedo,
+            )
+            self.albedo = albedo
         # ------------------------------------------------
         # Simple dynamic albedo depending on ice vs. snow vs. bare ground (tundra) using values from Dingman
         # ------------------------------------------------
