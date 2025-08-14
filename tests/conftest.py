@@ -191,7 +191,7 @@ def mock_forcing_file() -> Path:
 def mock_config(mock_forcing_file: Path) -> Path:
     mock_yaml_content = f"""
     site_prefix: cat-11223  # file prefix for the study site
-    forcing file: {mock_forcing_file} # the forcing .csv file used in this test case
+    forcing_file: {mock_forcing_file} # the forcing .csv file used in this test case
     n_steps: 10  # number of time steps
     dt: 3600.0   # timestep for snowmelt process [sec]
     Cp_snow: 2090.0 # heat capacity of snow [J/kg/K]

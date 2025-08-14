@@ -13,9 +13,9 @@ packages = [
 ]
 
 [project]
-name = "topoflow-glacier"
-version = "2025.7.0"
-description = "Building Hydrofabric(s) + Processing Ancillary Data"
+name = "topoflow_glacier"
+version = "2025.8.0"
+description = "A glacier module from topoflow"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
@@ -29,9 +29,11 @@ maintainers = [
 ]
 
 dependencies = [
-  "numpy>=2.3.2",
-  "python-dotenv==1.1.0",
+  "bmipy==2.0.1",
+  "numpy==2.3.2",
   "pandas==2.3.1",
+  "pydantic==2.11.4",
+  "python-dotenv==1.1.0",
 ]
 
 
@@ -116,6 +118,8 @@ convention = "numpy"
 "docs/*" = ["I"]
 "tests/*" = ["D"]
 "*/__init__.py" = ["F401"]
+"src/topoflow_glacier/bmi/bmi_base.py" = ["D102"] # missing public docstrings
+"src/topoflow_glacier/physics/solar_funcs.py" = ["D102"] # missing public docstrings
 
 [tool.mypy]
 python_version = "3.11"

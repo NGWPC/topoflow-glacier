@@ -1,11 +1,13 @@
 import numpy as np
+from mypyc.analysis.dataflow import CFG
 
 from topoflow_glacier.glacier_energy_balance import glacier_component
 from topoflow_glacier.met_base_NGWPC import met_component
 
 WV_met = met_component()
+WV_met.initialize(cfg_file="../config/topoflow_glacier_config.yaml")
 # inputs we need for meteorology
-WV_met.set_constants()
+# WV_met.set_constants()
 WV_met.P = np.array([0.3])
 WV_met.T_air = np.array([4.0])  # bottom air temperature
 WV_met.T_surf = np.array([5])  # T_surf = land_surface temperature
@@ -26,6 +28,14 @@ WV_met.h0_snow = np.array([2.0])
 WV_met.h0_ice = np.array([2.0])
 WV_met.h_snow = WV_met.h0_snow
 WV_met.h_ice = WV_met.h0_ice
+WV_met.rho_snow = np.array([300])
+WV_met.dt = np.array([3600])
+watershed_slope = np.array([0.2])
+WV_met.set_slope_angle(watershed_slope)
+watershed_aspect = np.array([0.2])
+WV_met.set_aspect_angle(watershed_aspect)
+WV_met.initialize_computed_vars()
+# WV_met.P_snow_3day_grid = np.array([0.0])    # this is for 3-day snow and originally had the dimension of [dt, row_grids,column_grids], but not here because we are running it as a lumped model for catchmetns
 WV_met.albedo = np.array([0.3])  # just an initial value
 WV_met.update_albedo(method="aging")  # aging or simple
 
@@ -38,8 +48,8 @@ WV_glacier = glacier_component()
 WV_glacier.set_constants()
 
 WV_glacier.T0 = np.array([-0.2])
-WV_glacier.dt = np.array([3600])
-WV_glacier.rho_snow = np.array([300])
+WV_glacier.dt = WV_met.dt   #np.array([3600])
+WV_glacier.rho_snow = WV_met.rho_snow    #np.array([300])
 WV_glacier.rho_ice = np.array([917])
 WV_glacier.h_active_layer = np.array([0.125])
 WV_glacier.h0_snow = np.array([2.0])
