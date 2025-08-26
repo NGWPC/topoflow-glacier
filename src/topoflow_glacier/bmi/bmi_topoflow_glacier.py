@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import yaml
 from numpy.typing import NDArray
 
@@ -34,6 +35,15 @@ _var_name_map = {
     "glacier_top_surface__elevation": "z_ice",
     "glacier_ice__thickness": "h_ice",
 }
+_input_alias_map = {
+    "atmosphere_water__liquid_equivalent_precipitation_rate": "P",         # precip
+    "land_surface_air__temperature": "T_air",                               # air temp
+    # "land_surface_radiation~incoming~shortwave__energy_flux": "SW_in",    # SW down
+    "land_surface_radiation~incoming~longwave__energy_flux": "LW_in",     # LW down
+    "land_surface_air__pressure": "P_air",                                  # total air pressure
+    "atmosphere_air_water~vapor__relative_saturation": "Hum_sp",             # specific humidity
+}
+
 
 
 class BmiTopoflowGlacier(BmiBase):
@@ -56,10 +66,18 @@ class BmiTopoflowGlacier(BmiBase):
 
         # load into pydantic model and save in class for querying
         self.cfg = TopoflowGlacierConfig.model_validate(config)
+        self.hours_per_day = np.float64(24)
+        self.seconds_per_Day = np.float64(24) * 3600
         self.sec_per_year = np.float64(3600) * 24 * 365  # [secs]
         self.mps_to_mmph = np.float64(3600000)
         self.mmph_to_mps = np.float64(1) / np.float64(3600000)
         self.dt = self.cfg.dt
+        self.days_per_dt = self.dt / 86400
+        self.n = 0.0   # For albedo calculations, Start 'number of days since major snowfall' at 0
+        self.C_to_K = 273.15
+        self.K_to_C = - 273.15
+        self.twopi = np.float64(2) * np.pi
+        self.one_seventh = np.float64(1) / 7
 
         # TODO create state variables for these
         self.P = np.array(0, dtype="float64")
@@ -68,15 +86,16 @@ class BmiTopoflowGlacier(BmiBase):
         self.RH = np.array(0, dtype="float64")
         self.p0 = np.array(0, dtype="float64")  # atm pressure mbar
         self.z = np.array(0, dtype="float64")  # the height the wind is read
-        self.uz = np.array(0, dtype="float64")  # wid speed at height z
+        self.uz = np.array(0, dtype="float64")  # wind speed at height z.
         self.cloud_factor = np.array(0, dtype="float64")
         self.canopy_factor = np.array(0, dtype="float64")
-        self.z0_air = np.array(0, dtype="float64")  # surface roughness length scale
         self.P_rain = np.array(0, dtype="float64")
         self.P_snow = np.array(0, dtype="float64")
         self.e_air = np.array(0, dtype="float64")
         self.e_surf = np.array(0, dtype="float64")
         self.em_air = np.array(0, dtype="float64")
+        # self.SW_in = np.array(0, dtype="float64")
+        self.LW_in = np.array(0, dtype="float64")
         self.Qn_SW = np.array(0, dtype="float64")
         self.Qn_LW = np.array(0, dtype="float64")
         self.Q_sum = np.array(0, dtype="float64")
@@ -96,6 +115,9 @@ class BmiTopoflowGlacier(BmiBase):
         self.em_air = np.array(0, dtype="float64")
         self.Qc = np.array(0, dtype="float64")
         self.Qa = np.array(0, dtype="float64")
+        self.P_air = np.array(0, dtype="float64")
+        self.Hum_sp = np.array(0, dtype="float64")
+        self.P_snow_3day_watershed = np.zeros(int(3 * self.seconds_per_Day / self.cfg.dt), dtype="float64")
 
         # Ice component
         self.rho_H2O = np.float64(self.cfg.rho_H2O)  # [kg/m**3]
@@ -111,6 +133,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.Lf = np.float64(self.cfg.Lf)  # [J kg-1]
         self.T0 = np.array(self.cfg.T0, dtype="float64")  # [deg C]
         self.h_active_layer = np.array(self.cfg.h_active_layer, dtype="float64")  # [m]
+        self.T_rain_snow = np.float64(self.cfg.T_rain_snow)
 
         self.h_snow = np.array(self.cfg.h0_snow, dtype="float64")  # [m]
         self.h_ice = np.array(self.cfg.h0_ice, dtype="float64")  # [m]
@@ -152,9 +175,9 @@ class BmiTopoflowGlacier(BmiBase):
         T_snow = self.T_surf
         del_T = self.T0_cc - T_snow
         self.Eccs = (self.rho_snow * self.Cp_snow) * self.h_snow * del_T
-        np.maximum(self.Eccs, np.float64(0), out=self.Eccs)  # (in place)
+        self.Eccs = np.maximum(self.Eccs, 0.0)
         self.Ecci = (self.rho_ice * self.Cp_ice) * self.h_active_layer * del_T
-        np.maximum(self.Ecci, np.float64(0), out=self.Ecci)  # (in place)
+        self.Ecci = np.maximum(self.Ecci, 0.0)
 
         self.start_year, self.start_month, self.start_day, self.start_hour = self._parse_yyyymmddhh(
             self.cfg.start_time
@@ -164,12 +187,18 @@ class BmiTopoflowGlacier(BmiBase):
         self.julian_day = solar.Julian_Day(
             self.start_month, self.start_day, self.start_hour, year=self.start_year
         )
-        self.start_datetime = solar.get_datetime_str(
-            self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0
+        self.start_datetime = pd.to_datetime(
+                solar.get_datetime_str(
+                    self.start_year,
+                    self.start_month,
+                    self.start_day,
+                    self.start_hour, 0, 0
+            )
         )
 
     def update(self) -> None:
         """Update the model based on inputs (only meterological and glacier currently)"""
+        self.update_atm_pressure_from_elevation(T_C = True, MBAR=True)
         # Update Meteorological Component
         self.update_P_integral()  # update vol_P (leq)
         self.update_P_max()
@@ -178,7 +207,9 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_P_rain_integral()  # update vol_PR
         self.update_P_snow_integral()  # update vol_PS (leq)
         self.update_saturation_vapor_pressure(MBAR=True)
-        self.update_vapor_pressure()
+        self.update_vapor_pressure_from_spHum_AirPre(MBAR=True)
+        self.update_RH()
+        # self.update_vapor_pressure()
         self.update_dew_point()  ###
         self.update_T_surf()
         self.update_saturation_vapor_pressure(MBAR=True, SURFACE=True)  ########
@@ -188,10 +219,12 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_precipitable_water_content()  ###
         self.update_vapor_pressure(SURFACE=True)  ########
         self.update_latent_heat_flux()  # (uses e_air and e_surf)
-        self.update_conduction_heat_flux()
-        self.update_advection_heat_flux()
+        self.update_conduction_heat_flux()    # currently assumed zero
+        self.update_advection_heat_flux()     # currently assumed zero
         self.update_julian_day()
         self.update_albedo(method="aging")
+        self.set_aspect_angle()
+        self.set_slope_angle()
         self.update_net_shortwave_radiation()
         self.update_em_air()
         self.update_net_longwave_radiation()
@@ -227,6 +260,45 @@ class BmiTopoflowGlacier(BmiBase):
         dt = datetime.strptime(s, fmt)  # raises ValueError if malformed
         return dt.year, dt.month, dt.day, dt.hour
 
+    def update_atm_pressure_from_elevation(self, T_C=True, MBAR=False):
+        """
+        Estimate atmospheric pressure at elevation z_m (meters).
+
+        Parameters
+        ----------
+        z_m : float
+            Elevation above sea level [m].
+        T_C : float, optional
+            Air temperature [°C] for the isothermal exponential model.
+            If None, uses the standard atmosphere formula with lapse rate.
+        MBAR : bool, optional
+            If True, return pressure in hPa (mbar). Default False = Pa.
+
+        Returns
+        -------
+        p0 : float
+            Atmospheric pressure [Pa]
+        """
+        # constants
+        sea_level_p0 = self.cfg.sea_level_p0  # sea-level standard pressure [Pa]
+        T0 = self.cfg.sea_level_T0  # sea-level standard temperature [K]
+        g = self.cfg.g  # gravity [m/s2]
+        L = self.cfg.T_lapse_rate  # temperature lapse rate [K/m]
+        R_star = self.cfg.uni_gas_const  # universal gas constant [J/mol/K]
+        M = self.cfg.M_mass_air  # molar mass of dry air [kg/mol]
+
+        if T_C == False:
+            # Standard atmosphere with lapse rate
+            self.p0 = sea_level_p0 * (1 - (L * self.cfg.elev) / T0) ** (g * M / (R_star * L))  # Pa
+        else:
+            # Isothermal assumption with given T in Celsius
+            T_K = self.T_air + 273.15
+            self.p0 = sea_level_p0 * np.exp(-M * g * self.cfg.elev / (R_star * T_K))  # Pa
+        self.p0 = self.p0 / np.float64(1000)  # [kPa]
+
+        if MBAR:  # KPa to kpa
+            self.p0 = self.p0 * np.float64(10.0)
+
     def update_P_integral(self):
         """Update mass total for P, sum over all pixels
         -------------------------------------------------
@@ -256,7 +328,7 @@ class BmiTopoflowGlacier(BmiBase):
         """  # noqa: D205
         P_rain = self.P * (self.T_air > self.T_rain_snow)
 
-        if (np.ndim(self.P_rain) == 0) & (self.T_air_type.lower() == "scalar"):
+        if np.ndim(self.P_rain) == 0:
             self.P_rain.fill(P_rain)  #### (mutable scalar)
         else:
             self.P_rain = P_rain
@@ -311,6 +383,8 @@ class BmiTopoflowGlacier(BmiBase):
         """  # noqa: D205
         top = self.g * self.z * (self.T_air - self.T_surf)
         bot = (self.uz) ** 2.0 * (self.T_air + np.float64(273.15))
+        if bot == 0.0:
+            bot = 0.01   # to prevent denominator becomes zero
         self.Ri = top / bot
 
     def update_bulk_aero_conductance(self):
@@ -337,7 +411,7 @@ class BmiTopoflowGlacier(BmiBase):
         """  # noqa: D205
         h_snow = self.h_snow  # (ref from new framework)
 
-        arg = self.kappa / np.log((self.z - h_snow) / self.z0_air)
+        arg = self.cfg.kappa / np.log(np.maximum((self.z - h_snow) / self.cfg.z0_air, 0.01))
         Dn = self.uz * (arg) ** 2.0
         if self.T_air == self.T_surf:
             nw = 0
@@ -412,7 +486,7 @@ class BmiTopoflowGlacier(BmiBase):
         -----------------------------
         """  # noqa: D205
         delta_T = self.T_air - self.T_surf
-        self.Qh = (self.rho_air * self.Cp_air) * self.Dh * delta_T
+        self.Qh = (self.cfg.rho_air * self.cfg.Cp_air) * self.Dh * delta_T
 
     def update_saturation_vapor_pressure(self, MBAR=False, SURFACE=False):
         """Notes: Saturation vapor pressure is a function of temperature.
@@ -451,7 +525,7 @@ class BmiTopoflowGlacier(BmiBase):
             #             if (HAVE_VAR and T_CONSTANT): return
             T = self.T_air
 
-        if not (self.SATTERLUND):
+        if not (self.cfg.SATTERLUND):
             # ------------------------------
             # Use Brutsaert (1975) method
             # ------------------------------
@@ -475,6 +549,41 @@ class BmiTopoflowGlacier(BmiBase):
             self.e_sat_surf = e_sat
         else:
             self.e_sat_air = e_sat
+
+    def update_vapor_pressure_from_spHum_AirPre(self, SURFACE=False, MBAR=False):
+        """
+        computes vapor pressure using specific humidity and total air pressure
+
+        :param SURFACE: Flase or True
+        :param MBAR: converts to mbar
+        :return: None
+        """
+
+        e = self.Hum_sp * self.P_air / (self.cfg.eps + ((1 - self.cfg.eps) * self.Hum_sp))
+        e = e / np.float64(1000)  # [kPa]
+
+        if MBAR:
+            e = e * np.float64(10)  # [mbar]
+
+
+        if SURFACE:
+            self.e_surf = e
+        else:
+            self.e_air = e
+
+    def update_RH(self, SURFACE=False):
+        """
+        Updates relative humidity. Between [0, 1]
+
+        :param SURFACE: False or True
+        :return: None
+        """
+
+        if SURFACE:
+            self.RH = self.e_surf / self.e_sat_surf
+        else:
+            self.RH = self.e_air / self.e_sat_air
+
 
     def update_vapor_pressure(self, SURFACE=False):
         """Notes: T is temperature in Celsius
@@ -538,17 +647,16 @@ class BmiTopoflowGlacier(BmiBase):
         # as a scalar or grid so that it still varies in time
         # -------------------------------------------------
         """  # noqa: D205
-        if (self.T_surf_type.lower() == "scalar") or (self.T_surf_type.lower() == "grid"):
-            # -------------------------------------------------
-            # If snow and/or ice are present,  T_surf cannot
-            # exceed 0 deg C
-            # -------------------------------------------------
-            T_surf = np.where(
-                ((self.h_snow > 0) | (self.h_ice > 0)),  # where snow or ice exists
-                np.minimum(self.T_dew, np.float64(0)),  # T_surf is either T_dew or 0, whichever is lower
-                self.T_dew,
-            )  # everywhere else, T_surf = T_dew
-            self.T_surf = T_surf
+        # -------------------------------------------------
+        # If snow and/or ice are present,  T_surf cannot
+        # exceed 0 deg C
+        # -------------------------------------------------
+        T_surf = np.where(
+            ((self.h_snow > 0) | (self.h_ice > 0)),  # where snow or ice exists
+            np.minimum(self.T_dew, np.float64(0)),  # T_surf is either T_dew or 0, whichever is lower
+            self.T_dew,
+        )  # everywhere else, T_surf = T_dew
+        self.T_surf = T_surf
 
     def update_precipitable_water_content(self):
         """
@@ -568,8 +676,8 @@ class BmiTopoflowGlacier(BmiBase):
         # be 0.622 instead of 0.662 (Zhang et al., 2000).
         # --------------------------------------------------------
         """  # noqa: D205
-        const = self.latent_heat_constant
-        factor = self.rho_air * self.Lv * self.De
+        const = self.cfg.latent_heat_constant
+        factor = self.cfg.rho_air * self.cfg.Lv * self.De
         delta_e = self.e_air - self.e_surf
         self.Qe = factor * delta_e * (const / self.p0)
 
@@ -594,20 +702,25 @@ class BmiTopoflowGlacier(BmiBase):
         """  # noqa: D205
         pass  # Method not implemented in Topoflow: https://github.com/NOAA-OWP/topoflow/blob/db4d5877a32455beebe78edf5abe8d91df128665/topoflow/components/met_base.py#L1925
 
-    def update_julian_day(self):
-        """Update the julian_day and year ?
-        # -----------------------------------
-        """  # noqa: D205
-        # @FRahmani368 can you change the datetime support to use pandas datetimes rather than strings?
-        datetime = time_utils.get_current_datetime(self.start_datetime, self.time_min, time_units="minutes")
-        (y, m1, d, h, m2, s) = time_utils.split_datetime_str(datetime, ALL=True)
-        self.year = y
-        ### self.year.fill(y)  # (if year is 0D ndarray, mutable)
+    def update_julian_day(self, time_units="seconds"):
+        """Update the julian_day and year using pandas datetime."""
+    # -------------------------------------------------------
+    # Compute the current datetime from start + offset
+    # -------------------------------------------------------
+        self.get_current_datetime(time_units=time_units)
+
+        self.year = self.start_datetime.year
+
 
         # ----------------------------------
         # Update the *decimal* Julian day
         # ----------------------------------
-        self.julian_day = solar.Julian_Day(m1, d, hour_num=h, year=y)
+        self.julian_day = (
+                        self.start_datetime.day_of_year - 1
+                        + self.start_datetime.hour/24
+                        + self.start_datetime.minute/1440
+                        + self.start_datetime.second/86400
+                    )
         # print('Julian Day =', self.julian_day)
 
         # ----------------------------------
@@ -622,13 +735,14 @@ class BmiTopoflowGlacier(BmiBase):
         # clock_hour is in 24-hour military time
         # but it can have a decimal part.
         # ------------------------------------------
-        dec_part = self.julian_day - np.int16(self.julian_day)
+        dec_part = self.julian_day - int(self.julian_day)
         clock_hour = dec_part * self.hours_per_day
         ## print '    Computing solar_noon...'
+        self.GMT_offset = solar.gmt_offset_hours(lat=self.cfg.lat, lon=self.cfg.lon, when_utc=self.start_datetime)
         solar_noon = solar.True_Solar_Noon(
             self.julian_day,
-            self.lon_deg,
-            self.GMT_offset,
+            self.cfg.lon,    # for USA region, lon is negative
+            self.GMT_offset,    #  time-zone offset from GMT/UTC in hours
             DST_offset=None,  #####
             year=self.year,
         )
@@ -656,21 +770,21 @@ class BmiTopoflowGlacier(BmiBase):
             K = 0.44
             alpha0 = 0.4
 
-            self.P_snow_3day_grid = np.roll(
-                self.P_snow_3day_grid, -1, axis=0
+            self.P_snow_3day_watershed = np.roll(
+                self.P_snow_3day_watershed, -1, axis=0
             )  # you can roll on different axes (time axis), shape of the DEM and time axis and roll on the time axis
             ws_density_ratio = self.rho_H2O / self.rho_snow
-            self.P_snow_3day_grid[np.size(self.P_snow_3day_grid, axis=0) - 1] = (
+            self.P_snow_3day_watershed[np.size(self.P_snow_3day_watershed, axis=0) - 1] = (
                 self.P_snow * self.dt * ws_density_ratio
             )
 
-            P_snow_3day_grid_total = np.sum(
-                self.P_snow_3day_grid, axis=0
+            p_snow_3day_watershed_total = np.sum(
+                self.P_snow_3day_watershed, axis=0
             )  # maybe multipy by timestep here # also make sure to only sum over time axis
-            # self.P_snow_3day_grid_total = P_snow_3day_grid_total # if you want to output and make sure it's working properly
+            # self.p_snow_3day_watershed_total = p_snow_3day_watershed_total # if you want to output and make sure it's working properly
 
-            self.n = np.where((P_snow_3day_grid_total >= 0.03), 0, self.n)
-            self.n = np.where((P_snow_3day_grid_total < 0.03), self.n + self.days_per_dt, self.n)
+            self.n = np.where((p_snow_3day_watershed_total >= 0.03), 0, self.n)
+            self.n = np.where((p_snow_3day_watershed_total < 0.03), self.n + self.days_per_dt, self.n)
             snow_albedo = alpha0 + K * np.exp(-self.n * r)
 
             albedo = np.where(
@@ -711,6 +825,39 @@ class BmiTopoflowGlacier(BmiBase):
             )
             self.albedo = albedo
 
+    def set_aspect_angle(self):
+        # ------------------------------------------------------
+        # ---------------------------------------------------------
+        alpha = (np.pi / 2) - self.cfg.aspect
+        alpha = (self.twopi + alpha) % self.twopi
+        # -----------------------------------------------
+        is_nan = not np.isfinite(alpha)
+        if is_nan:
+            alpha = np.float64(0)
+
+        self.alpha = alpha
+
+    def set_slope_angle(self):
+
+        # -------------------------------------------------
+        # -------------------------------------------------
+        self.slopes = self.cfg.slope
+        beta = np.arctan(self.cfg.slope)
+        beta = (self.twopi + beta) % self.twopi
+        # ---------------------------------------------
+        is_nan = not np.isfinite(beta)
+        if is_nan:
+            beta = np.float64(0)
+        # ------------------------------------------------------------------
+        w_bad = np.logical_or((beta < 0), (beta > np.pi / 2))
+        if w_bad:
+            print('ERROR: In met_base.py, some slope angles are out')
+            print('       of range.  Returning without setting beta.')
+            print()
+            return
+
+        self.beta = beta
+
     def update_net_shortwave_radiation(self):
         """Notes:  If time is before local sunrise or after local
         #         sunset then Qn_SW should be zero.
@@ -719,14 +866,14 @@ class BmiTopoflowGlacier(BmiBase):
         # --------------------------------
         """  # noqa: D205
         K_cs = solar.Clear_Sky_Radiation(
-            self.lat_deg,
+            self.cfg.lat,
             self.julian_day,
             self.W_p,
             self.TSN_offset,
             self.alpha,
             self.beta,
             self.albedo,
-            self.dust_atten,
+            self.cfg.dust_atten,
         )
 
         # -------------------------------------------
@@ -765,7 +912,7 @@ class BmiTopoflowGlacier(BmiBase):
         """  # noqa: D205
         T_air_K = self.T_air + self.C_to_K
 
-        if not (self.SATTERLUND):
+        if not (self.cfg.SATTERLUND):
             # -----------------------------------------------------
             # Brutsaert (1975) method for computing emissivity
             # of the air, em_air.  This formula uses e_air with
@@ -773,8 +920,8 @@ class BmiTopoflowGlacier(BmiBase):
             # See notes for update_vapor_pressure().
             # -----------------------------------------------------
             e_air_kPa = self.e_air / np.float64(10)  # [kPa]
-            F = self.canopy_factor
-            C = self.cloud_factor
+            F = self.cfg.canopy_factor
+            C = self.cfg.cloud_factor
             term1 = (1.0 - F) * 1.72 * (e_air_kPa / T_air_K) ** self.one_seventh
             term2 = 1.0 + (0.22 * C**2.0)
             em_air = (term1 * term2) + F
@@ -827,10 +974,13 @@ class BmiTopoflowGlacier(BmiBase):
         Compute Qn_LW for this time
         --------------------------------
         """  # noqa: D205
-        T_air_K = self.T_air + self.C_to_K
+
         T_surf_K = self.T_surf + self.C_to_K
-        LW_in = self.em_air * self.sigma * (T_air_K) ** 4.0
-        LW_out = self.em_surf * self.sigma * (T_surf_K) ** 4.0
+        # LW_in is alread available from inputs
+        # T_air_K = self.T_air + self.C_to_K
+        # LW_in = self.em_air * self.cfg.sigma * (T_air_K) ** 4.0
+        LW_in = self.LW_in
+        LW_out = self.cfg.em_surf * self.cfg.sigma * (T_surf_K) ** 4.0
 
         # ----------------------------------------------------
         # 2023-08-29.  The next line was here before today,
@@ -840,7 +990,7 @@ class BmiTopoflowGlacier(BmiBase):
         #        Longwave_Radiation_UNL.html
         # It reduces the net longwave radiation.
         # ----------------------------------------------------
-        LW_out += (1.0 - self.em_surf) * LW_in
+        LW_out += (1.0 - self.cfg.em_surf) * LW_in
 
         self.Qn_LW[:] = LW_in - LW_out  # [W m-2]
 
@@ -1408,10 +1558,16 @@ class BmiTopoflowGlacier(BmiBase):
         ------
             ValueError: If name does not exist
         """
+        ## outputs variables mapping
         if name in _var_name_map:
             self._output[name] = src
-        elif name in self.input_names:
-            self.input[name] = src
+        elif name in self._dynamic_inputs.names():
+            self._dynamic_inputs.set_value(name, src)
+            # dynamic input vaiable mapping
+            if name in _input_alias_map:
+                attr = _input_alias_map.get(name)
+                # Create or update the attribute (array or scalar is fine)
+                setattr(self, attr, src)
         else:
             raise ValueError(
                 f"Variable {name} does not exist input or output variables.  User getters to view options."
@@ -1474,3 +1630,32 @@ class BmiTopoflowGlacier(BmiBase):
             str: Data type.
         """
         return str(self.get_value_ptr(name).dtype)
+
+    def get_current_datetime(self, time_units="seconds"):
+        """
+        Advance start_datetime by a given offset.
+        Returns a pandas.Timestamp.
+
+        Parameters
+        ----------
+        start_datetime : pd.Timestamp | str | datetime
+        time : int | float
+            Amount to advance. Can be fractional for seconds/minutes/hours/days.
+        time_units : {"seconds","minutes","hours","days"}
+        """
+
+        time = self.cfg.dt
+
+        if not isinstance(self.start_datetime, pd.Timestamp):
+            self.start_datetime = pd.to_datetime(self.start_datetime)
+
+        if time_units in ("second", "seconds", "s", "sec"):
+            self.start_datetime += pd.to_timedelta(time, unit="s")
+        elif time_units in ("minute", "minutes", "min"):
+            self.start_datetime += pd.to_timedelta(time, unit="m")
+        elif time_units in ("hour", "hours", "hr", "hrs"):
+            self.start_datetime += pd.to_timedelta(time, unit="h")
+        elif time_units in ("day", "days", "d"):
+            self.start_datetime += pd.to_timedelta(time, unit="d")
+        else:
+            raise ValueError(f"Unsupported time_units: {time_units}")

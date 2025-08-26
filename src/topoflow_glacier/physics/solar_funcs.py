@@ -115,6 +115,11 @@ See also papers by:
 from datetime import datetime
 
 import numpy as np
+from timezonefinder import TimezoneFinder
+from zoneinfo import ZoneInfo
+import pandas as pd
+
+tf = TimezoneFinder()
 
 
 # ------------------------------------------------------------------------
@@ -391,7 +396,7 @@ def ET_Radiation_Flux(lat_deg, Julian_day, th):
     #     At equator (lat_deg=0), this occurs at th<-6 and th>6.
     #     When negative, return zero as shown.
     # -------------------------------------------------------------
-    np.maximum(K_ET, 0.0, K_ET)  # in-place
+    K_ET = np.maximum(K_ET, 0.0)  # in-place
     return K_ET  # [Watts / m^2]
 
 
@@ -1559,3 +1564,25 @@ def get_datetime_str(y, m1, d, h, m2, s):
     # -----------------------------------------------
     datetime_str = date_str + " " + time_str
     return datetime_str
+
+def gmt_offset_hours(lat: float, lon: float, when_utc: pd.Timestamp) -> float:
+    """
+    Return UTC offset in hours at the given lat/lon and UTC datetime.
+    Positive east of Greenwich, negative west. Includes DST when applicable.
+    """
+    if not isinstance(when_utc, pd.Timestamp):
+        when_utc = pd.to_datetime(when_utc)
+
+    tzname = tf.timezone_at(lat=lat, lng=lon)  # e.g., "America/Denver"
+    if tzname is None:
+        # try a stricter search near borders
+        tzname = tf.certain_timezone_at(lat=lat, lng=lon)
+    if tzname is None:
+        raise ValueError("Could not determine timezone for given lat/lon.")
+
+    tz = ZoneInfo(tzname)
+
+    # Treat 'when_utc' as an instant in UTC and convert to local time
+    local_time = when_utc.tz_localize("UTC").astimezone(tz)
+    offset_sec = local_time.utcoffset().total_seconds()
+    return offset_sec / 3600.0  # may be fractional (e.g., +5.5, +5.75)

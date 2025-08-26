@@ -7,7 +7,7 @@ from topoflow_glacier import BmiTopoflowGlacier
 
 def run_topoflow_glacier():
     """The main function for running topoflow glacier"""
-    bmi_cfg_file = Path.cwd() / "config/cat-2062920.yaml"
+    bmi_cfg_file = Path.cwd().parent / "config/cat-3062920.yaml"
 
     print("Creating an instance of an BMI_LSTM model object")
     model = BmiTopoflowGlacier()
@@ -24,15 +24,15 @@ def run_topoflow_glacier():
     long_wave_radiation = df["LWDOWN"].values
     short_wave_radiation = df["SWDOWN"].values
     air_pressure = df["PSFC"].values
-    air_water_vapor = df["Q2D"].values
+    air_water_vapor = df["Q2D"].values     #specific humidity
 
     for i in range(len(precip_data)):
         model.set_value("atmosphere_water__liquid_equivalent_precipitation_rate", precip_data[i])
-        model.set_value("land_surface_air__pressure", air_water_vapor[i])
+        model.set_value("land_surface_air__temperature", model.K_to_C + temp_data[i])   # converting to Celcius
         model.set_value("land_surface_radiation~incoming~longwave__energy_flux", long_wave_radiation[i])
         model.set_value("land_surface_radiation~incoming~shortwave__energy_flux", short_wave_radiation[i])
         model.set_value("land_surface_air__pressure", air_pressure[i])
-        model.set_value("land_surface_air__temperature", temp_data[i])
+        model.set_value("atmosphere_air_water~vapor__relative_saturation", air_water_vapor[i])
 
         model.update()
 
