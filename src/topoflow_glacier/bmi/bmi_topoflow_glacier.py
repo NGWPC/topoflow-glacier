@@ -992,7 +992,7 @@ class BmiTopoflowGlacier(BmiBase):
         # ----------------------------------------------------
         LW_out += (1.0 - self.cfg.em_surf) * LW_in
 
-        self.Qn_LW[:] = LW_in - LW_out  # [W m-2]
+        self.Qn_LW = LW_in - LW_out  # [W m-2]
 
         # --------------------------------------------------------------
         # Can't do this yet.  Qn_LW is always initialized grid now
@@ -1063,7 +1063,7 @@ class BmiTopoflowGlacier(BmiBase):
         if np.ndim(self.Q_sum) == 0:
             self.Q_sum.fill(Q_sum)  #### (mutable scalar)
         else:
-            self.Q_sum[:] = Q_sum  # [W m-2]
+            self.Q_sum = Q_sum  # [W m-2]
 
     def update_snow_meltrate(self):
         """Compute energy-balance meltrate
@@ -1117,7 +1117,7 @@ class BmiTopoflowGlacier(BmiBase):
             M = np.float64(M)  # avoid type change
             self.SM.fill(M)
         else:
-            self.SM[:] = M
+            self.SM = M
 
     def update_ice_meltrate(self):
         """Compute energy-balance meltrate
@@ -1207,7 +1207,7 @@ class BmiTopoflowGlacier(BmiBase):
         # Is already done by "Energy-Balance" component.
         # ------------------------------------------------------
         """  # noqa: D205
-        np.maximum(self.SM, np.float64(0), out=self.SM)
+        self.SM = np.maximum(self.SM, np.float64(0))
 
     def enforce_max_ice_meltrate(self):
         """The max possible meltrate would be if all ice (given
@@ -1235,7 +1235,7 @@ class BmiTopoflowGlacier(BmiBase):
         """Update mass total for IM, sum over all pixels
         # ------------------------------------------------
         """  # noqa: D205
-        volume = np.float64(self.IM * self.da * self.dt)
+        volume = np.float64(self.IM * self.cfg.da * self.dt)
         self.vol_IM += np.sum(volume)
 
     def update_snowfall_cold_content(self):
@@ -1359,9 +1359,8 @@ class BmiTopoflowGlacier(BmiBase):
         """Return if density_ratio is constant in time.
         -----------------------------------------------
         """  # noqa: D205
-        if self.rho_snow_type.lower() in ["scalar", "grid"]:
-            return
-        density_ratio = self.rho_H2O / self.rho_snow
+
+        density_ratio = self.cfg.rho_H2O / self.cfg.rho_snow
 
         # -------------------------------------
         # Save updated density ratio in self
