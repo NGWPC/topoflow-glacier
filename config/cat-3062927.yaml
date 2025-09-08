@@ -1,0 +1,16 @@
+site_prefix: cat-3062920
+forcing_file: ../data/cat-3062927.csv
+n_steps: 10
+dt: 3600
+start_time: 2013032000
+end_time: 2013033123
+da: 6.8687994599986375
+slope: 88.50261275228442
+lat: 46.80576554
+lon: -121.76916088
+elev: 1965.3127597507133  # meters
+h_active_layer: 0.125 # Assuming wolverine glacier value
+h0_snow: 2.0  # Assuming wolverine glacier value
+h0_ice: 2.0  # Assuming wolverine glacier value
+h0_swe: 0.6  # Assuming wolverine glacier value
+h0_iwe: 1.834  # Assuming wolverine glacier value

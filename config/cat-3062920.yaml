@@ -6,9 +6,9 @@ start_time: "2013032000"
 end_time: "2013033123"
 da: 11.418749923500716
 slope: 88.582729
-lat: 46.82607
 lon: -121.81418
-elev: 1000.0   # average elevation
+lat: 46.81953220
+elev: 2446.3922737596167  # meters
 h_active_layer: 0.125 # Assuming wolverine glacier value
 h0_snow: 2.0  # Assuming wolverine glacier value
 h0_ice: 2.0  # Assuming wolverine glacier value
