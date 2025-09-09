@@ -904,7 +904,8 @@ def Clear_Sky_Radiation(lat_deg, Julian_day, W_p, TSN_offset, alpha, beta, albed
     # from 0.604 to
     # ------------------------------------------------
     dark = np.logical_or((TSN_offset <= T_sr), (TSN_offset >= T_ss))
-    K_cs[dark] = np.float64(0)
+    if dark:
+        K_cs = np.float64(0)
 
     # ------------------------------------------------
     # Use of LE & GE also takes care of case where

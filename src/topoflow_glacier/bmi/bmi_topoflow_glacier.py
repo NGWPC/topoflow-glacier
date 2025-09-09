@@ -21,6 +21,7 @@ _dynamic_input_vars = [
     ("atmosphere_water__liquid_equivalent_precipitation_rate", "mm h-1"),
     ("land_surface_radiation~incoming~shortwave__energy_flux", "W m-2"),
     ("land_surface_air__temperature", "degK"),
+    ("wind_speed_UV", "m sec-1"),
 ]
 
 _output_vars = [
@@ -42,6 +43,7 @@ _input_alias_map = {
     "land_surface_radiation~incoming~longwave__energy_flux": "LW_in",     # LW down
     "land_surface_air__pressure": "P_air",                                  # total air pressure
     "atmosphere_air_water~vapor__relative_saturation": "Hum_sp",             # specific humidity
+    "wind_speed_UV": "uz"                                                   # wind speed
 }
 
 
@@ -78,6 +80,10 @@ class BmiTopoflowGlacier(BmiBase):
         self.K_to_C = - 273.15
         self.twopi = np.float64(2) * np.pi
         self.one_seventh = np.float64(1) / 7
+        self.da_km2 = self.cfg.da
+        self.da_m2 =  self.da_km2 * 1e+6
+        self.slopes = self.cfg.slope
+        self.P_snow_3day_watershed = np.zeros(int(3 * self.hours_per_day / self.dt), dtype="float64")
 
         # TODO create state variables for these
         self.P = np.array(0, dtype="float64")
@@ -85,7 +91,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.T_surf = np.array(0, dtype="float64")  # T_surf = land_surface temperature
         self.RH = np.array(0, dtype="float64")
         self.p0 = np.array(0, dtype="float64")  # atm pressure mbar
-        self.z = np.array(0, dtype="float64")  # the height the wind is read
+        self.z = np.array(10.0, dtype="float64")  # the height the wind is read
         self.uz = np.array(0, dtype="float64")  # wind speed at height z.
         self.cloud_factor = np.array(0, dtype="float64")
         self.canopy_factor = np.array(0, dtype="float64")
@@ -117,7 +123,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.Qa = np.array(0, dtype="float64")
         self.P_air = np.array(0, dtype="float64")
         self.Hum_sp = np.array(0, dtype="float64")
-        self.P_snow_3day_watershed = np.zeros(int(3 * self.seconds_per_Day / self.cfg.dt), dtype="float64")
+
 
         # Ice component
         self.rho_H2O = np.float64(self.cfg.rho_H2O)  # [kg/m**3]
@@ -154,7 +160,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.vol_swe_start = np.array(0, dtype="float64")
         self.vol_iwe = np.array(0, dtype="float64")
         self.vol_iwe_start = np.array(0, dtype="float64")
-        self.albedo = np.array([0.3])
+        self.albedo = np.array(0.3,  dtype="float64")
 
         # Update Snowpack Water Volume
         volume = np.float64(self.h_swe * self.cfg.da)  # [m^3]
@@ -206,13 +212,13 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_P_snow()
         self.update_P_rain_integral()  # update vol_PR
         self.update_P_snow_integral()  # update vol_PS (leq)
-        self.update_saturation_vapor_pressure(MBAR=True)
+        self.update_saturation_vapor_pressure(MBAR=True)    # for air
         self.update_vapor_pressure_from_spHum_AirPre(MBAR=True)
         self.update_RH()
         # self.update_vapor_pressure()
         self.update_dew_point()  ###
         self.update_T_surf()
-        self.update_saturation_vapor_pressure(MBAR=True, SURFACE=True)  ########
+        self.update_saturation_vapor_pressure(MBAR=True, SURFACE=True)  # for surface
         self.update_bulk_richardson_number()
         self.update_bulk_aero_conductance()
         self.update_sensible_heat_flux()
@@ -221,7 +227,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_latent_heat_flux()  # (uses e_air and e_surf)
         self.update_conduction_heat_flux()    # currently assumed zero
         self.update_advection_heat_flux()     # currently assumed zero
-        self.update_julian_day()
+        self.update_julian_day(time_units="hour")
         self.update_albedo(method="aging")
         self.set_aspect_angle()
         self.set_slope_angle()
@@ -244,8 +250,9 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_combined_meltrate()
 
         self.update_iwe()  # relies on previous timestep's swe value
-        self.update_density_ratio()
+        self.update_ws_density_ratio()
         self.update_snow_depth()
+        self.update_wi_density_ratio()
         self.update_ice_depth()
         self.update_snowpack_cold_content()
 
@@ -296,7 +303,7 @@ class BmiTopoflowGlacier(BmiBase):
             self.p0 = sea_level_p0 * np.exp(-M * g * self.cfg.elev / (R_star * T_K))  # Pa
         self.p0 = self.p0 / np.float64(1000)  # [kPa]
 
-        if MBAR:  # KPa to kpa
+        if MBAR:  # KPa to mbar
             self.p0 = self.p0 * np.float64(10.0)
 
     def update_P_integral(self):
@@ -308,7 +315,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain and da are both either scalar or grid.
         -------------------------------------------------
         """  # noqa: D205
-        volume = np.double(self.P * self.cfg.da * self.dt)  # [m^3]
+        volume = np.double(self.P * self.da_m2 * self.dt)  # [m^3]
         self.vol_P += np.sum(volume)
 
     def update_P_max(self):
@@ -354,7 +361,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain and da are both either scalar or grid.
         ------------------------------------------------
         """  # noqa: D205
-        volume = np.double(self.P_rain * self.cfg.da * self.dt)  # [m^3]
+        volume = np.double(self.P_rain * self.da_m2 * self.dt)  # [m^3]
         self.vol_PR += np.sum(volume)
 
     def update_P_snow_integral(self):
@@ -364,7 +371,7 @@ class BmiTopoflowGlacier(BmiBase):
         # P_snow and da are both either scalar or grid.
         # ------------------------------------------------
         """  # noqa: D205
-        volume = np.double(self.P_snow * self.cfg.da * self.dt)  # [m^3]
+        volume = np.double(self.P_snow * self.da_m2 * self.dt)  # [m^3]
         self.vol_PS += np.sum(volume)
 
     def update_bulk_richardson_number(self):
@@ -841,8 +848,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         # -------------------------------------------------
         # -------------------------------------------------
-        self.slopes = self.cfg.slope
-        beta = np.arctan(self.cfg.slope)
+        beta = np.arctan(self.slopes)
         beta = (self.twopi + beta) % self.twopi
         # ---------------------------------------------
         is_nan = not np.isfinite(beta)
@@ -976,10 +982,10 @@ class BmiTopoflowGlacier(BmiBase):
         """  # noqa: D205
 
         T_surf_K = self.T_surf + self.C_to_K
-        # LW_in is alread available from inputs
-        # T_air_K = self.T_air + self.C_to_K
-        # LW_in = self.em_air * self.cfg.sigma * (T_air_K) ** 4.0
-        LW_in = self.LW_in
+
+        T_air_K = self.T_air + self.C_to_K
+        LW_in = self.em_air * self.cfg.sigma * (T_air_K) ** 4.0
+        # LW_in = self.LW_in    # LW_in is already available from inputs
         LW_out = self.cfg.em_surf * self.cfg.sigma * (T_surf_K) ** 4.0
 
         # ----------------------------------------------------
@@ -1112,7 +1118,7 @@ class BmiTopoflowGlacier(BmiBase):
         E_rem = np.maximum(E_in - self.Eccs, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
 
-        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]
+        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]   # TODO: I guess it is m/hour
         if np.size(self.SM) == 1:
             M = np.float64(M)  # avoid type change
             self.SM.fill(M)
@@ -1166,7 +1172,7 @@ class BmiTopoflowGlacier(BmiBase):
         E_rem = np.maximum(E_in - self.Ecci, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
 
-        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]
+        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]  TODO: m/hour? also shouldn't it be self.rho_ice?
         IM = np.maximum(M, np.float64(0))
         self.IM = np.where((self.h_swe == 0) & (self.previous_swe == 0), IM, np.float64(0))
 
@@ -1228,14 +1234,14 @@ class BmiTopoflowGlacier(BmiBase):
         """Update mass total for SM, sum over all pixels
         # ------------------------------------------------
         """  # noqa: D205
-        volume = np.float64(self.SM * self.cfg.da * self.dt)  # [m^3]
+        volume = np.float64(self.SM * self.da_m2 * self.dt)  # [m^3]
         self.vol_SM += np.sum(volume)  #### np.sum vs. sum ???
 
     def update_IM_integral(self):
         """Update mass total for IM, sum over all pixels
         # ------------------------------------------------
         """  # noqa: D205
-        volume = np.float64(self.IM * self.cfg.da * self.dt)
+        volume = np.float64(self.IM * self.da_m2 * self.dt)
         self.vol_IM += np.sum(volume)
 
     def update_snowfall_cold_content(self):
@@ -1355,7 +1361,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.h_iwe -= dh2_iwe
         np.maximum(self.h_iwe, np.float64(0), self.h_iwe)  # (in place)
 
-    def update_density_ratio(self):
+    def update_ws_density_ratio(self):
         """Return if density_ratio is constant in time.
         -----------------------------------------------
         """  # noqa: D205
@@ -1365,11 +1371,28 @@ class BmiTopoflowGlacier(BmiBase):
         # -------------------------------------
         # Save updated density ratio in self
         # -------------------------------------
-        if np.ndim(self.density_ratio) == 0:
+        if np.ndim(self.ws_density_ratio) == 0:
             density_ratio = np.float64(density_ratio)  ### (from 0D array to scalar)
-            self.density_ratio.fill(density_ratio)  ### (mutable scalar)
+            self.ws_density_ratio.fill(density_ratio)  ### (mutable scalar)
         else:
-            self.density_ratio[:] = density_ratio
+            self.ws_density_ratio[:] = density_ratio
+
+    def update_wi_density_ratio(self):
+        """Return if density_ratio is constant in time.
+        -----------------------------------------------
+        """  # noqa: D205
+
+        density_ratio = self.cfg.rho_H2O / self.cfg.rho_ice
+
+        # -------------------------------------
+        # Save updated density ratio in self
+        # -------------------------------------
+        if np.ndim(self.wi_density_ratio) == 0:
+            density_ratio = np.float64(density_ratio)  ### (from 0D array to scalar)
+            self.wi_density_ratio.fill(density_ratio)  ### (mutable scalar)
+        else:
+            self.wi_density_ratio[:] = density_ratio
+
 
     def update_swe_integral(self):
         """Update mass total for water in the snowpack,
@@ -1643,7 +1666,7 @@ class BmiTopoflowGlacier(BmiBase):
         time_units : {"seconds","minutes","hours","days"}
         """
 
-        time = self.cfg.dt
+        time = self.dt
 
         if not isinstance(self.start_datetime, pd.Timestamp):
             self.start_datetime = pd.to_datetime(self.start_datetime)
