@@ -27,10 +27,11 @@ class TopoflowGlacierConfig(BaseModel):
     elev: float = Field(description="Average watershed elevation [m]")
     T_rain_snow: float = Field(1.0, description="Degree-day temperature parameter (degree C)")
     aspect: float = Field(0.0, description="Aspect angle for each catchment")
-    dust_atten: float = Field(0.08, ge=0.0, le=0.2, description="Atmosphere aerosol dust reduction of transmittance")
+    dust_atten: float = Field(
+        0.08, ge=0.0, le=0.2, description="Atmosphere aerosol dust reduction of transmittance"
+    )
     canopy_factor: float = Field(0.0, ge=0.0, le=1.0, description="canopy factor tha masks solar radiation")
     cloud_factor: float = Field(0.0, ge=0.0, le=1.0, description="cloud percentage")
-
 
     # -----------------------
     # Physical constants
@@ -78,7 +79,7 @@ class TopoflowGlacierConfig(BaseModel):
     max_Bz: float = Field(default=2.0, description="Maximum allowed mass balance [m/yr]")
     spinup_time: float = Field(default=200.0, description="Spinup time [years]")
     sea_level: float = Field(default=-100.0, description="Sea level [m]")
-    z0_air: float = Field(default=0.01, ge=0.0001, le=0.1,description="Surface roughness length [m]")
+    z0_air: float = Field(default=0.01, ge=0.0001, le=0.1, description="Surface roughness length [m]")
     em_surf: float = Field(default=0.985, ge=0.9, le=1, description="Surface roughness length [m]")
 
     geothermal_heat_flux: float = Field(default=1575000.0, description="Geothermal heat flux [(J/year)/m^2]")

@@ -37,15 +37,13 @@ _var_name_map = {
     "glacier_ice__thickness": "h_ice",
 }
 _input_alias_map = {
-    "atmosphere_water__liquid_equivalent_precipitation_rate": "P",         # precip
-    "land_surface_air__temperature": "T_air",                               # air temp
+    "atmosphere_water__liquid_equivalent_precipitation_rate": "P",  # precip
+    "land_surface_air__temperature": "T_air",  # air temp
     # "land_surface_radiation~incoming~shortwave__energy_flux": "SW_in",    # SW down
-    "land_surface_radiation~incoming~longwave__energy_flux": "LW_in",     # LW down
-    "land_surface_air__pressure": "P_air",                                  # total air pressure
-    "atmosphere_air_water~vapor__relative_saturation": "Hum_sp",             # specific humidity
-    "wind_speed_UV": "uz"                                                   # wind speed
-}
-
+    "land_surface_radiation~incoming~longwave__energy_flux": "LW_in",  # LW down
+    "land_surface_air__pressure": "P_air",  # total air pressure
+    "atmosphere_air_water~vapor__relative_saturation": "Hum_sp",  # specific humidity
+    "wind_speed_UV": "uz",  # wind speed
 
 
 class BmiTopoflowGlacier(BmiBase):
@@ -66,6 +64,7 @@ class BmiTopoflowGlacier(BmiBase):
         with open(config_file) as f:
             config = yaml.safe_load(f)
 
+        #
         # load into pydantic model and save in class for querying
         self.cfg = TopoflowGlacierConfig.model_validate(config)
         self.hours_per_day = np.float64(24)
@@ -75,13 +74,13 @@ class BmiTopoflowGlacier(BmiBase):
         self.mmph_to_mps = np.float64(1) / np.float64(3600000)
         self.dt = self.cfg.dt
         self.days_per_dt = self.dt / 86400
-        self.n = 0.0   # For albedo calculations, Start 'number of days since major snowfall' at 0
+        self.n = 0.0  # For albedo calculations, Start 'number of days since major snowfall' at 0
         self.C_to_K = 273.15
-        self.K_to_C = - 273.15
+        self.K_to_C = -273.15
         self.twopi = np.float64(2) * np.pi
         self.one_seventh = np.float64(1) / 7
         self.da_km2 = self.cfg.da
-        self.da_m2 =  self.da_km2 * 1e+6
+        self.da_m2 = self.da_km2 * 1e6
         self.slopes = self.cfg.slope
         self.P_snow_3day_watershed = np.zeros(int(3 * self.hours_per_day / self.dt), dtype="float64")
 
@@ -124,7 +123,6 @@ class BmiTopoflowGlacier(BmiBase):
         self.P_air = np.array(0, dtype="float64")
         self.Hum_sp = np.array(0, dtype="float64")
 
-
         # Ice component
         self.rho_H2O = np.float64(self.cfg.rho_H2O)  # [kg/m**3]
         self.rho_ice = np.float64(self.cfg.rho_ice)  # [kg/m**3]
@@ -160,7 +158,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.vol_swe_start = np.array(0, dtype="float64")
         self.vol_iwe = np.array(0, dtype="float64")
         self.vol_iwe_start = np.array(0, dtype="float64")
-        self.albedo = np.array(0.3,  dtype="float64")
+        self.albedo = np.array(0.3, dtype="float64")
 
         # Update Snowpack Water Volume
         volume = np.float64(self.h_swe * self.cfg.da)  # [m^3]
@@ -194,17 +192,12 @@ class BmiTopoflowGlacier(BmiBase):
             self.start_month, self.start_day, self.start_hour, year=self.start_year
         )
         self.start_datetime = pd.to_datetime(
-                solar.get_datetime_str(
-                    self.start_year,
-                    self.start_month,
-                    self.start_day,
-                    self.start_hour, 0, 0
-            )
+            solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
         )
 
     def update(self) -> None:
         """Update the model based on inputs (only meterological and glacier currently)"""
-        self.update_atm_pressure_from_elevation(T_C = True, MBAR=True)
+        self.update_atm_pressure_from_elevation(T_C=True, MBAR=True)
         # Update Meteorological Component
         self.update_P_integral()  # update vol_P (leq)
         self.update_P_max()
@@ -212,7 +205,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_P_snow()
         self.update_P_rain_integral()  # update vol_PR
         self.update_P_snow_integral()  # update vol_PS (leq)
-        self.update_saturation_vapor_pressure(MBAR=True)    # for air
+        self.update_saturation_vapor_pressure(MBAR=True)  # for air
         self.update_vapor_pressure_from_spHum_AirPre(MBAR=True)
         self.update_RH()
         # self.update_vapor_pressure()
@@ -225,8 +218,8 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_precipitable_water_content()  ###
         self.update_vapor_pressure(SURFACE=True)  ########
         self.update_latent_heat_flux()  # (uses e_air and e_surf)
-        self.update_conduction_heat_flux()    # currently assumed zero
-        self.update_advection_heat_flux()     # currently assumed zero
+        self.update_conduction_heat_flux()  # currently assumed zero
+        self.update_advection_heat_flux()  # currently assumed zero
         self.update_julian_day(time_units="hour")
         self.update_albedo(method="aging")
         self.set_aspect_angle()
@@ -236,7 +229,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_net_longwave_radiation()
         self.update_net_energy_flux()  # (at the end)
 
-        # Update Glacier component
+        # Update Snow & Glacier components
         self.extract_previous_swe()
         self.extract_previous_snow_depth()
         self.update_snow_meltrate()  # (meltrate = SM)
@@ -294,7 +287,7 @@ class BmiTopoflowGlacier(BmiBase):
         R_star = self.cfg.uni_gas_const  # universal gas constant [J/mol/K]
         M = self.cfg.M_mass_air  # molar mass of dry air [kg/mol]
 
-        if T_C == False:
+        if not T_C:
             # Standard atmosphere with lapse rate
             self.p0 = sea_level_p0 * (1 - (L * self.cfg.elev) / T0) ** (g * M / (R_star * L))  # Pa
         else:
@@ -315,7 +308,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain and da are both either scalar or grid.
         -------------------------------------------------
         """  # noqa: D205
-        volume = np.double(self.P * self.da_m2 * self.dt)  # [m^3]
+        volume = np.double(self.P * self.da_m2 * self.dt)  # [m^3 in the unit of self.dt]
         self.vol_P += np.sum(volume)
 
     def update_P_max(self):
@@ -391,7 +384,7 @@ class BmiTopoflowGlacier(BmiBase):
         top = self.g * self.z * (self.T_air - self.T_surf)
         bot = (self.uz) ** 2.0 * (self.T_air + np.float64(273.15))
         if bot == 0.0:
-            bot = 0.01   # to prevent denominator becomes zero
+            bot = 0.01  # to prevent denominator becomes zero
         self.Ri = top / bot
 
     def update_bulk_aero_conductance(self):
@@ -559,19 +552,17 @@ class BmiTopoflowGlacier(BmiBase):
 
     def update_vapor_pressure_from_spHum_AirPre(self, SURFACE=False, MBAR=False):
         """
-        computes vapor pressure using specific humidity and total air pressure
+        Computes vapor pressure using specific humidity and total air pressure
 
         :param SURFACE: Flase or True
         :param MBAR: converts to mbar
         :return: None
         """
-
         e = self.Hum_sp * self.P_air / (self.cfg.eps + ((1 - self.cfg.eps) * self.Hum_sp))
         e = e / np.float64(1000)  # [kPa]
 
         if MBAR:
             e = e * np.float64(10)  # [mbar]
-
 
         if SURFACE:
             self.e_surf = e
@@ -585,12 +576,10 @@ class BmiTopoflowGlacier(BmiBase):
         :param SURFACE: False or True
         :return: None
         """
-
         if SURFACE:
             self.RH = self.e_surf / self.e_sat_surf
         else:
             self.RH = self.e_air / self.e_sat_air
-
 
     def update_vapor_pressure(self, SURFACE=False):
         """Notes: T is temperature in Celsius
@@ -711,23 +700,23 @@ class BmiTopoflowGlacier(BmiBase):
 
     def update_julian_day(self, time_units="seconds"):
         """Update the julian_day and year using pandas datetime."""
-    # -------------------------------------------------------
-    # Compute the current datetime from start + offset
-    # -------------------------------------------------------
+        # -------------------------------------------------------
+        # Compute the current datetime from start + offset
+        # -------------------------------------------------------
         self.get_current_datetime(time_units=time_units)
 
         self.year = self.start_datetime.year
-
 
         # ----------------------------------
         # Update the *decimal* Julian day
         # ----------------------------------
         self.julian_day = (
-                        self.start_datetime.day_of_year - 1
-                        + self.start_datetime.hour/24
-                        + self.start_datetime.minute/1440
-                        + self.start_datetime.second/86400
-                    )
+            self.start_datetime.day_of_year
+            - 1
+            + self.start_datetime.hour / 24
+            + self.start_datetime.minute / 1440
+            + self.start_datetime.second / 86400
+        )
         # print('Julian Day =', self.julian_day)
 
         # ----------------------------------
@@ -745,11 +734,13 @@ class BmiTopoflowGlacier(BmiBase):
         dec_part = self.julian_day - int(self.julian_day)
         clock_hour = dec_part * self.hours_per_day
         ## print '    Computing solar_noon...'
-        self.GMT_offset = solar.gmt_offset_hours(lat=self.cfg.lat, lon=self.cfg.lon, when_utc=self.start_datetime)
+        self.GMT_offset = solar.gmt_offset_hours(
+            lat=self.cfg.lat, lon=self.cfg.lon, when_utc=self.start_datetime
+        )
         solar_noon = solar.True_Solar_Noon(
             self.julian_day,
-            self.cfg.lon,    # for USA region, lon is negative
-            self.GMT_offset,    #  time-zone offset from GMT/UTC in hours
+            self.cfg.lon,  # for USA region, lon is negative
+            self.GMT_offset,  #  time-zone offset from GMT/UTC in hours
             DST_offset=None,  #####
             year=self.year,
         )
@@ -833,6 +824,7 @@ class BmiTopoflowGlacier(BmiBase):
             self.albedo = albedo
 
     def set_aspect_angle(self):
+        """Set the aspect angle based on aspect parameter"""
         # ------------------------------------------------------
         # ---------------------------------------------------------
         alpha = (np.pi / 2) - self.cfg.aspect
@@ -845,7 +837,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.alpha = alpha
 
     def set_slope_angle(self):
-
+        """Slope angle"""
         # -------------------------------------------------
         # -------------------------------------------------
         beta = np.arctan(self.slopes)
@@ -857,8 +849,8 @@ class BmiTopoflowGlacier(BmiBase):
         # ------------------------------------------------------------------
         w_bad = np.logical_or((beta < 0), (beta > np.pi / 2))
         if w_bad:
-            print('ERROR: In met_base.py, some slope angles are out')
-            print('       of range.  Returning without setting beta.')
+            print("ERROR: In met_base.py, some slope angles are out")
+            print("       of range.  Returning without setting beta.")
             print()
             return
 
@@ -980,7 +972,6 @@ class BmiTopoflowGlacier(BmiBase):
         Compute Qn_LW for this time
         --------------------------------
         """  # noqa: D205
-
         T_surf_K = self.T_surf + self.C_to_K
 
         T_air_K = self.T_air + self.C_to_K
@@ -1365,7 +1356,6 @@ class BmiTopoflowGlacier(BmiBase):
         """Return if density_ratio is constant in time.
         -----------------------------------------------
         """  # noqa: D205
-
         density_ratio = self.cfg.rho_H2O / self.cfg.rho_snow
 
         # -------------------------------------
@@ -1381,7 +1371,6 @@ class BmiTopoflowGlacier(BmiBase):
         """Return if density_ratio is constant in time.
         -----------------------------------------------
         """  # noqa: D205
-
         density_ratio = self.cfg.rho_H2O / self.cfg.rho_ice
 
         # -------------------------------------
@@ -1392,7 +1381,6 @@ class BmiTopoflowGlacier(BmiBase):
             self.wi_density_ratio.fill(density_ratio)  ### (mutable scalar)
         else:
             self.wi_density_ratio[:] = density_ratio
-
 
     def update_swe_integral(self):
         """Update mass total for water in the snowpack,
@@ -1532,14 +1520,15 @@ class BmiTopoflowGlacier(BmiBase):
         """
         return "Topoflow-Glacier"
 
-    def get_input_item_count(self) -> int:
-        """Number of model input variables
-
-        Returns
-        -------
-            int: number of input variables
-        """
-        return len(input_names)
+    #
+    # def get_input_item_count(self) -> int:
+    #     """Number of model input variables
+    #
+    #     Returns
+    #     -------
+    #         int: number of input variables
+    #     """
+    #     return len(input_names)
 
     def get_input_var_names(self) -> tuple[str, ...]:  # type: ignore[override]
         """The names of each input variables
@@ -1656,6 +1645,7 @@ class BmiTopoflowGlacier(BmiBase):
     def get_current_datetime(self, time_units="seconds"):
         """
         Advance start_datetime by a given offset.
+
         Returns a pandas.Timestamp.
 
         Parameters
@@ -1665,7 +1655,6 @@ class BmiTopoflowGlacier(BmiBase):
             Amount to advance. Can be fractional for seconds/minutes/hours/days.
         time_units : {"seconds","minutes","hours","days"}
         """
-
         time = self.dt
 
         if not isinstance(self.start_datetime, pd.Timestamp):

@@ -16,3 +16,4 @@ h0_ice: 2.0  # Assuming wolverine glacier value
 h0_swe: 0.6  # Assuming wolverine glacier value
 h0_iwe: 1.834  # Assuming wolverine glacier value
 T_rain_snow: 0.0  # air temperature that the precip converts to snow (degree C)
+

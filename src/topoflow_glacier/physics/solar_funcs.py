@@ -1,5 +1,6 @@
 """
-This file defines a set of functions for computing both shortwave
+Defines a set of functions for computing both shortwave
+
 and longwave radiation.  Most of the functions are from Appendix
 E of Dingman (2002).  The equation for optical air mass is from
 Kasten and Young (1989).
@@ -113,17 +114,18 @@ See also papers by:
 # ------------------------------------------------------------------------
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import numpy as np
-from timezonefinder import TimezoneFinder
-from zoneinfo import ZoneInfo
 import pandas as pd
+from timezonefinder import TimezoneFinder
 
 tf = TimezoneFinder()
 
 
 # ------------------------------------------------------------------------
 def Current_Year():
+    """Getting year of current year"""
     # currentSecond = datetime.now().second
     # currentMinute = datetime.now().minute
     # currentHour   = datetime.now().hour
@@ -137,6 +139,7 @@ def Current_Year():
 #   Current_Year()
 # ------------------------------------------------------------------------
 def Solar_Constant():
+    """Solar constant"""
     # ---------------------------------------------------------
     # See: Wikipedia: Solar Constant (2023-08-29)
     # It varies from 1361 at solar min to 1362 at solar max
@@ -151,6 +154,7 @@ def Solar_Constant():
 #   Solar_Constant()
 # ------------------------------------------------------------------------
 def Day_Angle(Julian_day, DEGREES=False):
+    """Day angle in degrees."""
     # ---------------------------------------------------------
     # Notes:  The Julian day does not need to be an integer;
     #         decimal values can be used for more precision.
@@ -180,6 +184,7 @@ def Day_Angle(Julian_day, DEGREES=False):
 #   Day_Angle()
 # ------------------------------------------------------------------------
 def Eccentricity_Correction(day_angle):
+    """Eccentricity correction."""
     # ----------------------------------------
     # Note: Range is about (0.966, 1.035).
     # See Jupyter notebook for Meteorology.
@@ -198,6 +203,7 @@ def Eccentricity_Correction(day_angle):
 #   Eccentricity_Correction()
 # ------------------------------------------------------------------------
 def Declination(day_angle, DEGREES=False, DMS=False):
+    """Declination in degrees."""
     ########################################################
     # NB! Make sure that DEGREES and DMS default to False.
     ########################################################
@@ -244,6 +250,7 @@ def Declination(day_angle, DEGREES=False, DMS=False):
 #   Declination()
 # ------------------------------------------------------------------------
 def Earth_Angular_Velocity():
+    """Earth angular velocity"""
     # ---------------------------------------------------
     # Notes:  Compare to Earth_Rotation_Rate function.
     # ---------------------------------------------------
@@ -256,6 +263,7 @@ def Earth_Angular_Velocity():
 #   Earth_Angular_Velocity()
 # ------------------------------------------------------------------------
 def Zenith_Angle(lat_deg, declination, th):
+    """Zenith angle."""
     # ----------------------------------------------------------
     # Notes: lat_deg has units of DEGREES and declination
     #        must have units of RADIANS.
@@ -279,6 +287,7 @@ def Zenith_Angle(lat_deg, declination, th):
 #   Zenith_Angle()
 # ------------------------------------------------------------------------
 def Solar_Elevation_Angle(lat_deg, declination, th, DEGREES=False):
+    """Solar elevation angle in degrees."""
     # ----------------------------------------------------------
     # Note: This is the complement of the solar zenith angle.
     #       At sunrise and sunset, this angle is zero.
@@ -294,6 +303,7 @@ def Solar_Elevation_Angle(lat_deg, declination, th, DEGREES=False):
 #   Solar_Elevation_Angle()
 # ------------------------------------------------------------------------
 def Sunrise_Offset(lat_deg, declination):
+    """Sunrise offset calculation"""
     # ----------------------------------------------------------
     # Notes: lat and declination must have units of RADIANS.
     #        time has units of hours before true solar noon.
@@ -322,6 +332,7 @@ def Sunrise_Offset(lat_deg, declination):
 #   Sunrise_Offset()
 # ------------------------------------------------------------------------
 def Sunset_Offset(lat_deg, declination):
+    """Sunsetoffset calculation"""
     # ----------------------------------------------------------
     # Notes: lat and declination must have units of RADIANS.
     #        time has units of hours before true solar noon.
@@ -350,6 +361,7 @@ def Sunset_Offset(lat_deg, declination):
 #   Sunset_Offset()
 # ------------------------------------------------------------------------
 def Day_Length(lat_deg, Julian_day):
+    """Day length calculation based on Julian day and latitude"""
     day_angle = Day_Angle(Julian_day)
     declination = Declination(day_angle, DEGREES=False)
 
@@ -362,6 +374,7 @@ def Day_Length(lat_deg, Julian_day):
 #   Day_Length()
 # ------------------------------------------------------------------------
 def ET_Radiation_Flux(lat_deg, Julian_day, th):
+    """Evapotranspiration radiation flux"""
     # ------------------------------------------------------------
     # Notes:  This is the instantaneous extraterrestrial
     #         radiation flux on a horizontal plane at a time
@@ -415,6 +428,7 @@ def ET_Radiation_Flux(lat_deg, Julian_day, th):
 #   ET_Radiation_Flux()
 # ------------------------------------------------------------------------
 def Saturation_Vapor_Pressure(T, method="BRUTSAERT", MBAR=False):
+    """Saturation vapor pressure calculation."""
     if method == "BRUTSAERT":
         # ------------------------------
         # Use Brutsaert (1975) method
@@ -440,6 +454,7 @@ def Saturation_Vapor_Pressure(T, method="BRUTSAERT", MBAR=False):
 #   Saturation_Vapor_Pressure()
 # ------------------------------------------------------------------------
 def Vapor_Pressure(T, rel_humidity, MBAR=False):
+    """Vapor pressure calculation."""
     # -------------------------------------------------
     # RH is in [0,1], so e gets same units as e_sat.
     # So we never need to convert units of e.
@@ -452,6 +467,7 @@ def Vapor_Pressure(T, rel_humidity, MBAR=False):
 #   Vapor_Pressure()
 # ------------------------------------------------------------------------
 def Dew_Point(T, rel_humidity):
+    """Dw point based on humidity and air temperature"""
     # ---------------------------------------------------------
     # Notes:  Temps are in degrees C, and vapor pressure
     #         units are kPa.  Relative humidity is unitless.
@@ -467,6 +483,7 @@ def Dew_Point(T, rel_humidity):
 #   Dew_Point()
 # ------------------------------------------------------------------------
 def Precipitable_Water_Content(T, rel_humidity):
+    """Precipitable water content based on humidity and air temperature"""
     # ---------------------------------------
     # Note: Wp > 0 always, even if Td < 0.
     # ---------------------------------------
@@ -479,6 +496,7 @@ def Precipitable_Water_Content(T, rel_humidity):
 #   Precipitable_Water_Content()
 # ------------------------------------------------------------------------
 def Optical_Air_Mass(lat_deg, declination, th):
+    """Optical air mass"""
     # ------------------------------------------------------------
     # Notes: This is a dimensionless number that gives the
     #        relative path length (greater than 1) that
@@ -555,6 +573,7 @@ def Optical_Air_Mass(lat_deg, declination, th):
 #   Optical_Air_Mass()
 # ------------------------------------------------------------------------
 def Dust_Attenuation():
+    """Dust attenuation parameter"""
     # ----------------------------------------------------------
     # Notes:  Typical clear-sky values are between 0 and 0.2.
     #         Bolsenga (1964) cites values of:
@@ -569,6 +588,7 @@ def Dust_Attenuation():
 #   Dust_Attenuation()
 # ------------------------------------------------------------------------
 def Atmospheric_Transmissivity(lat_deg, Julian_day, W_p, th, gamma_dust=None):
+    """Atmospheric transmissivity"""
     # ------------------------------------------------------------
     # Notes:  W_p is precipitable water content in centimeters,
     #         which depends on air temp and relative humidity.
@@ -597,6 +617,7 @@ def Atmospheric_Transmissivity(lat_deg, Julian_day, W_p, th, gamma_dust=None):
 #   Atmospheric_Transmissivity()
 # ------------------------------------------------------------------------
 def Direct_Radiation_Flux(lat_deg, Julian_day, W_p, th, gamma_dust=None):
+    """Radiation flux"""
     # ------------------------------------------------------------
     # Notes:  W_p is precipitable water content in centimeters,
     #         which depends on air temp and relative humidity.
@@ -618,6 +639,7 @@ def Direct_Radiation_Flux(lat_deg, Julian_day, W_p, th, gamma_dust=None):
 #   Direct_Radiation_Flux()
 # ------------------------------------------------------------------------
 def Scattering_Attenuation(lat_deg, Julian_day, W_p, th, gamma_dust=None):
+    """Scattering Attenuation based on Julian Day and latitude"""
     if gamma_dust is None:
         gamma_dust = Dust_Attenuation()
 
@@ -636,6 +658,7 @@ def Scattering_Attenuation(lat_deg, Julian_day, W_p, th, gamma_dust=None):
 #   Scattering_Attenuation()
 # ------------------------------------------------------------------------
 def Diffuse_Radiation_Flux(lat_deg, Julian_day, W_p, th, gamma_dust=None):
+    """Diffuse radiation flux"""
     if gamma_dust is None:
         gamma_dust = Dust_Attenuation()
 
@@ -649,6 +672,7 @@ def Diffuse_Radiation_Flux(lat_deg, Julian_day, W_p, th, gamma_dust=None):
 #   Diffuse_Radiation_Flux()
 # ------------------------------------------------------------------------
 def Global_Radiation_Flux(lat_deg, Julian_day, W_p, th, gamma_dust=None):
+    """Global radiation flux"""
     if gamma_dust is None:
         gamma_dust = Dust_Attenuation()
 
@@ -664,6 +688,7 @@ def Global_Radiation_Flux(lat_deg, Julian_day, W_p, th, gamma_dust=None):
 #   Global_Radiation_Flux()
 # ------------------------------------------------------------------------
 def BS_Radiation_Flux(lat_deg, Julian_day, W_p, albedo, th, gamma_dust=None):
+    """Compute the backscattered radiation flux."""
     # ----------------------------------------------------------
     # Notes:  Compute the backscattered radiation flux.
     #         A table of typical albedos is given by Dingman,
@@ -691,6 +716,7 @@ def BS_Radiation_Flux(lat_deg, Julian_day, W_p, albedo, th, gamma_dust=None):
 #   BS_Radiation_Flux()
 # ------------------------------------------------------------------------
 def Longitude_Offset(lat_deg, alpha, beta):
+    """Longitude offset"""
     # -------------------------------------------------------------
     # Notes:  beta  = "slope angle" satisfies slope = tan(beta).
     #         alpha = "aspect_angle" or azimuth is measured
@@ -713,6 +739,7 @@ def Longitude_Offset(lat_deg, alpha, beta):
 #   Longitude_Offset()
 # ------------------------------------------------------------------------
 def Equivalent_Latitude(lat_deg, alpha, beta, DEGREES=False):
+    """Equivalent lat"""
     # -------------------------------------------------------------
     # Notes:  beta  = "slope angle" satisfies slope = tan(beta).
     #         alpha = "aspect_angle" or azimuth is measured
@@ -743,6 +770,7 @@ def Equivalent_Latitude(lat_deg, alpha, beta, DEGREES=False):
 #   Equivalent_Latitude()
 # ------------------------------------------------------------------------
 def Noon_Offset_Slope(lat_deg, alpha, beta):
+    """Noon offset slope"""
     dlon = Longitude_Offset(lat_deg, alpha, beta)  # [radians]
     omega = Earth_Angular_Velocity()
     t_noon = -np.float64(1) * dlon / omega
@@ -753,6 +781,7 @@ def Noon_Offset_Slope(lat_deg, alpha, beta):
 #   Noon_Offset_Slope()
 # ------------------------------------------------------------------------
 def Sunrise_Offset_Slope(lat_deg, Julian_day, alpha, beta):
+    """Sunrise offset slope"""
     # -----------------------------------------------------------
     # Notes:  beta  = "slope angle" satisfies slope = tan(beta).
     #         alpha = "aspect_angle" or azimuth is measured
@@ -778,6 +807,7 @@ def Sunrise_Offset_Slope(lat_deg, Julian_day, alpha, beta):
 #   Sunrise_Offset_Slope()
 # ------------------------------------------------------------------------
 def Sunset_Offset_Slope(lat_deg, Julian_day, alpha, beta):
+    """Sunset offset slope"""
     # -----------------------------------------------------------
     # Notes:  beta  = "slope angle" satisfies slope = tan(beta).
     #         alpha = "aspect_angle" or azimuth is measured
@@ -803,6 +833,7 @@ def Sunset_Offset_Slope(lat_deg, Julian_day, alpha, beta):
 #  Sunset_Offset_Slope()
 # ------------------------------------------------------------------------
 def Day_Length_Slope(lat_deg, Julian_day, alpha, beta):
+    """Day length slope"""
     t_sr = Sunrise_Offset_Slope(lat_deg, Julian_day, alpha, beta)
     t_ss = Sunset_Offset_Slope(lat_deg, Julian_day, alpha, beta)
 
@@ -812,6 +843,7 @@ def Day_Length_Slope(lat_deg, Julian_day, alpha, beta):
 #   Day_Length_Slope()
 # ------------------------------------------------------------------------
 def ET_Radiation_Flux_Slope(lat_deg, Julian_day, th, alpha, beta):
+    """---"""
     # -------------------------------------------------------------
     # Notes:  This is the instantaneous extraterrestrial
     #         radiation flux on a sloping plane.
@@ -860,6 +892,7 @@ def ET_Radiation_Flux_Slope(lat_deg, Julian_day, th, alpha, beta):
 #   ET_Radiation_Flux_Slope()
 # ------------------------------------------------------------------------
 def Clear_Sky_Radiation(lat_deg, Julian_day, W_p, TSN_offset, alpha, beta, albedo, gamma_dust):
+    """Shortwave radiation in clear sky"""
     # --------------------------------------------------------
     # Notes:  I think K_cs is the same as the Qnet required
     #         for the energy-balance routines in TopoFlow.
@@ -923,6 +956,7 @@ def Clear_Sky_Radiation(lat_deg, Julian_day, W_p, TSN_offset, alpha, beta, albed
 #   Clear_Sky_Radiation()
 # ------------------------------------------------------------------------
 def Julian_Day(month_num, day_num, hour_num=None, year=None):
+    """Julian day of year"""
     # -----------------------------------------------------------
     # NB!  month_num is an integer between 1 and 12 inclusive.
     #      day_num is day of the month.
@@ -978,6 +1012,7 @@ def Julian_Day(month_num, day_num, hour_num=None, year=None):
 #   Julian_Day()
 # ------------------------------------------------------------------------
 def Days_Per_Year(SIDEREAL=False):
+    """Number of days per year"""
     # ----------------------------------------------------------
     # Notes: A day is typically defined as a mean solar day
     #        and contains exactly 24 hours.  A year is then
@@ -1021,6 +1056,7 @@ def Days_Per_Year(SIDEREAL=False):
 #   Days_Per_Year()
 # ------------------------------------------------------------------------
 def Earth_Rotation_Rate(PER_HOUR=False):
+    """Earth rotation rate"""
     # ------------------------------------------------------------
     # Notes:  Compare to Earth_Angular_Velocity function.
     #         The default is to return the rotation rate
@@ -1042,6 +1078,7 @@ def Earth_Rotation_Rate(PER_HOUR=False):
 #   Earth_Rotation_Rate()
 # ------------------------------------------------------------------------
 def Earth_Tilt_Angle(DEGREES=False):
+    """Earth tilt angle"""
     # ------------------------------------------------------
     # Note:  The Earth's tilt angle is slowly decreasing.
     #        It is also known as the "obliquity".
@@ -1057,6 +1094,7 @@ def Earth_Tilt_Angle(DEGREES=False):
 #   Earth_Tilt_Angle()
 # ------------------------------------------------------------------------
 def Earth_Orbit_Eccentricity():
+    """Return the eccentricity of Earth's orbit"""
     # ----------------------------------------------------
     # Notes:  Return the eccentricity of Earth's orbit,
     #         which measures the difference between its
@@ -1071,6 +1109,7 @@ def Earth_Orbit_Eccentricity():
 #   Earth_Orbit_Eccentricity()
 # ------------------------------------------------------------------------
 def Vernal_Equinox(year):
+    """Vernal equinox"""
     # ---------------------------------------------------------------
     # Notes: This function assumes that vernal equinoxes from one
     #        year to the next are separated by exactly 365.2425
@@ -1101,6 +1140,7 @@ def Vernal_Equinox(year):
 #   Vernal_Equinox()
 # ------------------------------------------------------------------------
 def Earth_Perihelion(year=None):
+    """Refers to the point along the orbit of a planet around the sun where it is closest to the sun"""
     # -------------------------------------------------------------
     # NOTES:  Perihelion refers to the point along the orbit of
     #         a planet around the sun where it is closest to the
@@ -1259,6 +1299,7 @@ def Earth_Perihelion(year=None):
 # #   Earth_Perihelion_old()
 # ------------------------------------------------------------------------
 def Equation_Of_Time(Julian_day, year=None, DEGREES=False, DMS=False):
+    """Gives the time difference between true solar noon and local clock noon"""
     ############################################################
     # NB!  Should DEGREES and DMS both be False by default ??
     ############################################################
@@ -1391,6 +1432,7 @@ def Equation_Of_Time(Julian_day, year=None, DEGREES=False, DMS=False):
 #   Equation_of_Time()
 # ------------------------------------------------------------------------
 def True_Solar_Noon(Julian_day, longitude, GMT_offset=None, DST_offset=None, year=None):
+    """Finds the local solar noon at a given longitude and GMT offset."""
     # ------------------------------------------------------------
     # Notes: We need to know the local clock time when True
     #        Solar Noon occurs, since some of our equations
@@ -1441,6 +1483,7 @@ def True_Solar_Noon(Julian_day, longitude, GMT_offset=None, DST_offset=None, yea
 #   True_Solar_Noon()
 # ------------------------------------------------------------------------
 def Latitude_Grid(info):
+    """Create a grid of latitudes"""
     # -----------------------------
     # Create a grid of latitudes
     # -----------------------------
@@ -1493,6 +1536,7 @@ def Latitude_Grid(info):
 #   Latitude_Grid()
 # ------------------------------------------------------------------------
 def Longitude_Grid(info):
+    """Create a grid of longitudes"""
     # ------------------------------
     # Create a grid of longitudes
     # ------------------------------
@@ -1546,6 +1590,7 @@ def Longitude_Grid(info):
 
 
 def pad_with_zeros(num, target_len):
+    """Pads with zeros"""
     num_string = str(int(num))  # int removes decimal part
     n = len(num_string)
     m = target_len - n
@@ -1554,6 +1599,7 @@ def pad_with_zeros(num, target_len):
 
 
 def get_datetime_str(y, m1, d, h, m2, s):
+    """Getting datetime string"""
     m1_str = pad_with_zeros(m1, 2)
     d_str = pad_with_zeros(d, 2)
     date_str = str(y) + "-" + m1_str + "-" + d_str
@@ -1566,9 +1612,11 @@ def get_datetime_str(y, m1, d, h, m2, s):
     datetime_str = date_str + " " + time_str
     return datetime_str
 
+
 def gmt_offset_hours(lat: float, lon: float, when_utc: pd.Timestamp) -> float:
     """
     Return UTC offset in hours at the given lat/lon and UTC datetime.
+
     Positive east of Greenwich, negative west. Includes DST when applicable.
     """
     if not isinstance(when_utc, pd.Timestamp):
