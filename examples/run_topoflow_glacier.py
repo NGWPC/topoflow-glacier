@@ -53,11 +53,47 @@ def run_topoflow_glacier():
 
         model.update()
 
-        model.get_value("land_surface_water__runoff_depth", runoff_depth_m_hr[ts : ts + 1])
+        # Similiar output saving to:
+        # https://github.com/NGWPC/lstm/blob/341be45ed854442459ad2f4ed05532b5eb5406fe/lstm/run_lstm_bmi.py#L52C1-L54C27 see here for output variable
+        dest_array = np.zeros(1)
+        model.get_value("snowpack__melt_volume_flux", dest_array)
+        output_snow_melt[i : i + 1] = dest_array
+
+        dest_array = np.zeros(1)
+        model.get_value("glacier_ice__melt_volume_flux", dest_array)
+        output_ice_melt[i : i + 1] = dest_array
+
+        dest_array = np.zeros(1)
+        model.get_value("snowpack__liquid-equivalent_depth", dest_array)
+        output_h_swe[i : i + 1] = dest_array
+
+        dest_array = np.zeros(1)
+        model.get_value("glacier_ice__thickness", dest_array)
+        output_h_iwe[i : i + 1] = dest_array
+
+        dest_array = np.zeros(1)
+        model.get_value("snowpack__liquid-equivalent_depth", dest_array)
+        output_h_snow[i : i + 1] = dest_array
+
+        dest_array = np.zeros(1)
+        model.get_value("glacier_ice__thickness", dest_array)
+        output_h_ice[i : i + 1] = dest_array
+
+        model.get_value("land_surface_water__runoff_volume_flux", dest_array)
+        output_m_total[i : i + 1] = dest_array
 
     # Finalizing the BMI
     logger.debug("Finalizing the BMI...")
     model.finalize()
+
+    logger.info(f"|- Final Snow Melt: {output_snow_melt[-1]}")
+    logger.info(f"|- Final Ice Melt: {output_ice_melt[-1]}")
+    logger.info(f"|- Final Height SWE: {output_h_swe[-1]}")
+    logger.info(f"|- Final Height IWE: {output_h_iwe[-1]}")
+    logger.info(f"|- Final Snow Height: {output_h_snow[-1]}")
+    logger.info(f"|- Final Ice Height: {output_h_ice[-1]}")
+    logger.info(f"|- Final Runoff from melt: {output_m_total[-1]}")
+
     logger.debug("Finished.")
 
 
