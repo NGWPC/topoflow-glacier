@@ -9,8 +9,9 @@ from numpy.typing import NDArray
 
 from topoflow_glacier.bmi.bmi_base import BmiBase
 from topoflow_glacier.bmi.config import TopoflowGlacierConfig
+from topoflow_glacier.bmi.logger import configure_logging, logger
 from topoflow_glacier.physics import solar_funcs as solar
-from topoflow_glacier.physics.context import build_context
+from topoflow_glacier.physics.context import Context, build_context
 
 __all__ = ["BmiTopoflowGlacier"]
 
@@ -24,26 +25,130 @@ _dynamic_input_vars = [
     ("wind_speed_UV", "m sec-1"),
 ]
 
-_output_vars = [
-    ("land_surface_water__runoff_volume_flux", "m3 s-1"),
+_static_input_vars = [
+    ("basin__mean_of_elevation", "m"),
+    ("basin__mean_of_aspect", "m km-1"),
+    ("basin__mean_of_slope", "m km-1"),
 ]
 
-# @FRahmani368 Please change this dictionary to map the BMI values to the var names
-_var_name_map = {
-    # ---------------------------------------------------------------
-    "glacier_ice__domain_time_integral_of_melt_volume_flux": "vol_MR",
-    "glacier_ice__melt_volume_flux": "mr_ice",
-    "glacier_top_surface__elevation": "z_ice",
+# --------------   Combined Output Variables   -----------------------------
+_output_vars = [
+    # Meteorological outputs
+    ("atmosphere_bottom_air__mass-per-volume_density", "kg m-3"),
+    ("atmosphere_bottom_air__mass-specific_isobaric_heat_capacity", "J kg-1 K-1"),
+    ("land_surface_net-total-energy__energy_flux", "W m-2"),
+    ("land_surface__temperature", "deg_C"),
+    ("atmosphere_water__snowfall_leq-volume_flux", "m s-1"),
+    ("water-liquid__mass-per-volume_density", "kg m-3"),
+    # Snow-related outputs
+    ("snowpack__domain_time_integral_of_melt_volume_flux", "m3"),
+    ("snowpack__initial_domain_integral_of_liquid-equivalent_depth", "m3"),
+    ("snowpack__domain_integral_of_liquid-equivalent_depth", "m3"),
+    ("snowpack__energy-per-area_cold_content", "J m-2"),
+    ("snowpack__depth", "m"),
+    ("snowpack__initial_depth", "m"),
+    ("snowpack__initial_liquid-equivalent_depth", "m"),
+    ("snowpack__liquid-equivalent_depth", "m"),
+    ("snowpack__melt_volume_flux", "m s-1"),
+    ("snowpack__z_mean_of_mass-per-volume_density", "kg m-3"),
+    ("snowpack__z_mean_of_mass-specific_isobaric_heat_capacity", "J kg-1 K-1"),
+    # Ice-related outputs
+    ("glacier_ice__domain_time_integral_of_melt_volume_flux", "m3"),
+    ("glacier__initial_domain_integral_of_liquid-equivalent_depth", "m3"),
+    ("glacier__domain_integral_of_liquid-equivalent_depth", "m3"),
+    ("glacier__energy-per-area_cold_content", "J m-2"),
+    ("glacier_ice__thickness", "m"),
+    ("glacier_ice__initial_thickness", "m"),
+    ("glacier__initial_liquid_equivalent_depth", "m"),
+    ("glacier_ice__melt_volume_flux", "m s-1"),
+    ("glacier_ice__mass-per-volume_density", "kg m-3"),
+    ("glacier_ice__mass-specific_isobaric_heat_capacity", "J kg-1 K-1"),
+    ("glacier_top_surface__elevation", "m"),
+    # Combined/total outputs
+    ("cryosphere__melt_volume_flux", "m s-1"),
+    ("cryosphere__domain_time_integral_of_melt_volume_flux", "m3"),
+    ("land_surface_water__runoff_volume_flux", "m3 s-1"),
+    # Grid and time information
+    ("model_grid_cell__x_length", "m"),
+    ("model_grid_cell__y_length", "m"),
+    ("model__time_step", "s"),
+]
+
+# --------------   Complete Name Crosswalk   -----------------------------
+INTERNAL_NAME_CROSSWALK = {
+    # Input variable mappings (BMI name -> internal name)
+    "land_surface_radiation~incoming~longwave__energy_flux": "LW_in",
+    "land_surface_air__pressure": "P_air",
+    "atmosphere_air_water~vapor__relative_saturation": "Hum_sp",
+    "atmosphere_water__liquid_equivalent_precipitation_rate": "P",
+    "land_surface_radiation~incoming~shortwave__energy_flux": "SW_in",
+    "land_surface_air__temperature": "T_air",
+    "wind_speed_UV": "uz",
+    # Meteorological output mappings
+    "atmosphere_bottom_air__mass-per-volume_density": "rho_air",
+    "atmosphere_bottom_air__mass-specific_isobaric_heat_capacity": "Cp_air",
+    "land_surface_net-total-energy__energy_flux": "Q_sum",
+    "land_surface__temperature": "T_surf",
+    "atmosphere_water__snowfall_leq-volume_flux": "P_snow",
+    "water-liquid__mass-per-volume_density": "rho_H2O",
+    # Snow output mappings
+    "snowpack__domain_time_integral_of_melt_volume_flux": "vol_SM",
+    "snowpack__initial_domain_integral_of_liquid-equivalent_depth": "vol_swe_start",
+    "snowpack__domain_integral_of_liquid-equivalent_depth": "vol_swe",
+    "snowpack__energy-per-area_cold_content": "Eccs",
+    "snowpack__depth": "h_snow",
+    "snowpack__initial_depth": "h0_snow",
+    "snowpack__initial_liquid-equivalent_depth": "h0_swe",
+    "snowpack__liquid-equivalent_depth": "h_swe",
+    "snowpack__melt_volume_flux": "SM",
+    "snowpack__z_mean_of_mass-per-volume_density": "rho_snow",
+    "snowpack__z_mean_of_mass-specific_isobaric_heat_capacity": "Cp_snow",
+    # Ice output mappings
+    "glacier_ice__domain_time_integral_of_melt_volume_flux": "vol_IM",
+    "glacier__initial_domain_integral_of_liquid-equivalent_depth": "vol_iwe_start",
+    "glacier__domain_integral_of_liquid-equivalent_depth": "vol_iwe",
+    "glacier__energy-per-area_cold_content": "Ecci",
     "glacier_ice__thickness": "h_ice",
+    "glacier_ice__initial_thickness": "h0_ice",
+    "glacier__initial_liquid_equivalent_depth": "h0_iwe",
+    "glacier_ice__melt_volume_flux": "IM",
+    "glacier_ice__mass-per-volume_density": "rho_ice",
+    "glacier_ice__mass-specific_isobaric_heat_capacity": "Cp_ice",
+    "glacier_top_surface__elevation": "z_ice",
+    # Combined output mappings
+    "cryosphere__melt_volume_flux": "M_total",
+    "cryosphere__domain_time_integral_of_melt_volume_flux": "vol_M_total",
+    "land_surface_water__runoff_volume_flux": "M_total",  # Same as cryosphere melt
+    # Grid and time mappings
+    "model_grid_cell__x_length": "dx",
+    "model_grid_cell__y_length": "dy",
+    "model__time_step": "dt",
 }
-_input_alias_map = {
-    "atmosphere_water__liquid_equivalent_precipitation_rate": "P",  # precip
-    "land_surface_air__temperature": "T_air",  # air temp
-    # "land_surface_radiation~incoming~shortwave__energy_flux": "SW_in",    # SW down
-    "land_surface_radiation~incoming~longwave__energy_flux": "LW_in",  # LW down
-    "land_surface_air__pressure": "P_air",  # total air pressure
-    "atmosphere_air_water~vapor__relative_saturation": "Hum_sp",  # specific humidity
-    "wind_speed_UV": "uz",  # wind speed
+
+# Reverse mapping (internal name -> BMI name)
+EXTERNAL_NAME_CROSSWALK = {v: k for k, v in INTERNAL_NAME_CROSSWALK.items()}
+
+
+def crosswalk_to_external(name: str):
+    """Return the external name (the name exposed via BMI) for a given internal name."""
+    return INTERNAL_NAME_CROSSWALK[name]
+
+
+def crosswalk_to_interal(name: str):
+    """Return the internal name for a given external name (the name exposed via BMI)."""
+    return EXTERNAL_NAME_CROSSWALK[name]
+
+
+def bmi_array(arr: list[float]) -> np.ndarray:
+    """Trivial wrapper function to ensure the expected numpy array datatype is used."""
+    return np.array(arr, dtype="float64")
+
+
+def load_static_attributes(cfg: dict[str, Any], state: Context):
+    for external_name in state.names():
+        internal_name = crosswalk_to_interal(external_name)
+        value = cfg[internal_name]
+        state.set_value(external_name, bmi_array([value]))
 
 
 class BmiTopoflowGlacier(BmiBase):
@@ -51,6 +156,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     def __init__(self) -> None:
         self._dynamic_inputs = build_context(_dynamic_input_vars)
+        self._static_inputs = build_context(_static_input_vars)
         self._outputs = build_context(_output_vars)
         self._timestep: int = 0
 
@@ -64,7 +170,9 @@ class BmiTopoflowGlacier(BmiBase):
         with open(config_file) as f:
             config = yaml.safe_load(f)
 
-        #
+        # configure logging
+        configure_logging()
+
         # load into pydantic model and save in class for querying
         self.cfg = TopoflowGlacierConfig.model_validate(config)
         self.hours_per_day = np.float64(24)
@@ -252,6 +360,47 @@ class BmiTopoflowGlacier(BmiBase):
     def finalize(self) -> None:
         """Clean up any internal resources of the model"""
         pass
+
+    def update_until(self, time: float) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        time : float
+            the current time
+        """
+        if time <= self.get_current_time():
+            current_time = self.get_current_time()
+            logger.warning(f"no update performed: {time=} <= {current_time=}")
+            return None
+
+        n_steps, remainder = divmod(time - self.get_current_time(), self.get_time_step())
+
+        if remainder != 0:
+            logger.warning(f"time is not multiple of time step size. updating until: {time - remainder=} ")
+
+        for _ in range(int(n_steps)):
+            self.update()
+
+    def get_start_time(self) -> float:
+        """Returns the start time
+
+        Returns
+        -------
+        float
+            the start time
+        """
+        return 0
+
+    def get_current_time(self) -> float:
+        """Returns the current timestep
+
+        Returns
+        -------
+        float
+            The current time
+        """
+        return self._timestep * self._timestep_size_s
 
     def _parse_yyyymmddhh(self, s: str) -> tuple[int, int, int, int]:
         """Accepts 'YYYYMMDD-HH' (e.g., '20231001-01') or 'YYYYMMDDHH'. Returns (year, month, day, hour, dt)."""
@@ -849,9 +998,9 @@ class BmiTopoflowGlacier(BmiBase):
         # ------------------------------------------------------------------
         w_bad = np.logical_or((beta < 0), (beta > np.pi / 2))
         if w_bad:
-            print("ERROR: In met_base.py, some slope angles are out")
-            print("       of range.  Returning without setting beta.")
-            print()
+            logger.error(
+                "ERROR: In met_base.py, some slope angles are out of range.  Returning without setting beta."
+            )
             return
 
         self.beta = beta
@@ -1599,12 +1748,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     def get_value_ptr(self, name: str) -> NDArray:
         """Gets value in native form if exists in inputs or outputs"""
-        try:
-            return self.output[name]
-        except KeyError:
-            return self.input[name]
-        except KeyError as e:  # NOQA: B025
-            raise KeyError(f"{name} is not a known variable") from e
+        return first_containing(name, self._outputs, self._dynamic_inputs).value(name)
 
     def get_var_itemsize(self, name: str) -> int:
         """Size, in bytes, of a single element of the variable name
@@ -1670,3 +1814,14 @@ class BmiTopoflowGlacier(BmiBase):
             self.start_datetime += pd.to_timedelta(time, unit="d")
         else:
             raise ValueError(f"Unsupported time_units: {time_units}")
+
+
+def first_containing(name: str, *states: Context) -> Context:
+    """
+    Return the first `State` object containing `name` in `states`.
+    Otherwise, raise `KeyError`.
+    """
+    for state in states:
+        if name in state:
+            return state
+    raise KeyError(f"unknown name: {name!s}")
