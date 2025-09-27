@@ -14,7 +14,7 @@ packages = [
 
 [project]
 name = "topoflow_glacier"
-version = "2025.8.0"
+dynamic = ["version"]
 description = "A glacier module from topoflow"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,11 +33,11 @@ dependencies = [
   "numpy==2.3.2",
   "pandas==2.3.1",
   "pydantic==2.11.4",
+  "pyprojroot==0.3.0",
   "python-dotenv==1.1.0",
+  "pyyaml==6.0.3",
   "timezonefinder>=8.0.0",
 ]
-
-
 
 [project.optional-dependencies]
 docs = [
@@ -45,7 +45,6 @@ docs = [
   "sympy==1.14.0"
 ]
 
-[dependency-groups]
 dev = [
   "pre-commit==3.8.0",
   "ruff==0.11.13",
@@ -61,9 +60,6 @@ tests = [
     "pytest==8.4.1",
     "pytest-cov==6.1.1",
 ]
-
-[tool.uv]
-default-groups = ["dev", "examples", "tests"]
 
 [tool.ruff]
 line-length = 110

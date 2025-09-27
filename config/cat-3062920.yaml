@@ -1,5 +1,5 @@
 site_prefix: cat-3062920
-forcing_file: ../data/sample-cat-3062920.csv
+forcing_file: data/sample-cat-3062920.csv
 n_steps: 10
 dt: 1
 start_time: "2013032000"
@@ -16,4 +16,3 @@ h0_ice: 2.0  # Assuming wolverine glacier value
 h0_swe: 0.6  # Assuming wolverine glacier value
 h0_iwe: 1.834  # Assuming wolverine glacier value
 T_rain_snow: 0.0  # air temperature that the precip converts to snow (degree C)
-aspect: 242.8644693769529
