@@ -17,7 +17,7 @@ class TopoflowGlacierConfig(BaseModel):
     start_time: str = Field(description="The start time for the model run [YYYYMMDDHH]")
     end_time: str = Field(description="The end time for the model run [YYYYMMDDHH]")
     da: float = Field(description="The drainage area of the modeled reach [km2]")
-    slope: float = Field(description="The slope of the catchment [-]")
+    slope: float = Field(description="The slope of the catchment [m km-1]")
     lat: float = Field(description="Latitude of the centroid of the catchment")
     lon: float = Field(description="Longitude of the centroid of the catchment")
     h0_snow: float = Field(description="Initial depth of snow [m]")

@@ -68,11 +68,11 @@ def run_topoflow_glacier():
         output_h_swe[i : i + 1] = dest_array
 
         dest_array = np.zeros(1)
-        model.get_value("glacier_ice__thickness", dest_array)
+        model.get_value("glacier__liquid_equivalent_depth", dest_array)
         output_h_iwe[i : i + 1] = dest_array
 
         dest_array = np.zeros(1)
-        model.get_value("snowpack__liquid-equivalent_depth", dest_array)
+        model.get_value("snowpack_ice__thickness", dest_array)
         output_h_snow[i : i + 1] = dest_array
 
         dest_array = np.zeros(1)
