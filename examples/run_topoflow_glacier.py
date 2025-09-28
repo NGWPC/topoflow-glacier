@@ -98,7 +98,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
     logger.debug("Finalizing the BMI...")
     model.finalize()
 
-    output_m_total = output_m_total * model.da_m2 * 1 / 1000  # converting mm/hr melt to m3/hr
+    output_m_total = output_m_total * model.da_m2  # converting m/hr melt to m3/hr
 
     logger.info(f"|- Final Timestep Snow Melt: {output_snow_melt[-1]}")
     logger.info(f"|- Final Timestep Ice Melt: {output_ice_melt[-1]}")
