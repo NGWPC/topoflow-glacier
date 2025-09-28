@@ -166,116 +166,144 @@ class BmiTopoflowGlacier(BmiBase):
         self._timestep: int = 0
         configure_logging()
 
-    @property 
+    @property
     def P(self) -> np.ndarray:
+        """Getter for the precipitation dynamic input state variable"""
         return self._dynamic_inputs.value("atmosphere_water__liquid_equivalent_precipitation_rate")
 
     @P.setter
     def P(self, value: np.ndarray) -> None:
+        """Setter for the precipitation dynamic input state variable"""
         self._dynamic_inputs.set_value("atmosphere_water__liquid_equivalent_precipitation_rate", value)
-    
-    @property 
+
+    @property
     def T_air(self) -> np.ndarray:
+        """Getter for the Air Temperature dynamic input state variable"""
         return self._dynamic_inputs.value("land_surface_air__temperature")
 
     @T_air.setter
     def T_air(self, value: np.ndarray) -> None:
+        """Setter for the Air Temperature dynamic input state variable"""
         self._dynamic_inputs.set_value("lland_surface_air__temperature", value)
 
-    @property 
+    @property
     def LW_in(self) -> np.ndarray:
+        """Getter for the Long Wave Radiation dynamic input state variable"""
         return self._dynamic_inputs.value("land_surface_radiation~incoming~longwave__energy_flux")
 
     @LW_in.setter
     def LW_in(self, value: np.ndarray) -> None:
+        """Setter for the Long Wave Radiation dynamic input state variable"""
         self._dynamic_inputs.set_value("land_surface_radiation~incoming~longwave__energy_flux", value)
-    
-    @property 
+
+    @property
     def SW_in(self) -> np.ndarray:
+        """Getter for the Short Wave Radiation dynamic input state variable"""
         return self._dynamic_inputs.value("land_surface_radiation~incoming~shortwave__energy_flux")
-    
+
     @SW_in.setter
     def SW_in(self, value: np.ndarray) -> None:
+        """Setter for the Short Wave Radiation dynamic input state variable"""
         self._dynamic_inputs.set_value("land_surface_radiation~incoming~shortwave__energy_flux", value)
-    
-    @property 
+
+    @property
     def P_air(self) -> np.ndarray:
+        """Getter for the Air Pressure dynamic input state variable"""
         return self._dynamic_inputs.value("land_surface_air__pressure")
 
     @P_air.setter
     def P_air(self, value: np.ndarray) -> None:
+        """Setter for the Air Pressure dynamic input state variable"""
         self._dynamic_inputs.set_value("land_surface_air__pressure", value)
-    
-    @property 
+
+    @property
     def Hum_sp(self) -> np.ndarray:
+        """Getter for the Humidity input state variable"""
         return self._dynamic_inputs.value("atmosphere_air_water~vapor__relative_saturation")
 
     @Hum_sp.setter
     def Hum_sp(self, value: np.ndarray) -> None:
+        """Setter for the Humidity input state variable"""
         self._dynamic_inputs.set_value("atmosphere_air_water~vapor__relative_saturation", value)
 
-    @property 
+    @property
     def uz(self) -> np.ndarray:
+        """Getter for the XY Wind state variable"""
         return self._dynamic_inputs.value("wind_speed_UV")
 
     @uz.setter
     def uz(self, value: np.ndarray) -> None:
+        """Setter for the XY Wind state variable"""
         self._dynamic_inputs.set_value("wind_speed_UV", value)
-    
-    @property 
+
+    @property
     def SM(self) -> np.ndarray:
+        """Getter for the Snow Melt state variable"""
         return self._outputs.value("snowpack__melt_volume_flux")
 
     @SM.setter
     def SM(self, value: np.ndarray) -> None:
+        """Setter for the Snow Melt state variable"""
         self._outputs.set_value("snowpack__melt_volume_flux", value)
-    
-    @property 
+
+    @property
     def IM(self) -> np.ndarray:
+        """Getter for the Ice Melt state variable"""
         return self._outputs.value("glacier_ice__melt_volume_flux")
 
     @IM.setter
     def IM(self, value: np.ndarray) -> None:
+        """Setter for the Ice Melt state variable"""
         self._outputs.set_value("glacier_ice__melt_volume_flux", value)
 
-    @property 
+    @property
     def h_swe(self) -> np.ndarray:
+        """Getter for the Snow Water Equivalent Height state variable"""
         return self._outputs.value("snowpack__liquid-equivalent_depth")
 
     @h_swe.setter
     def h_swe(self, value: np.ndarray) -> None:
+        """Setter for the Snow Water Equivalent Height state variable"""
         self._outputs.set_value("snowpack__liquid-equivalent_depth", value)
-    
-    @property 
+
+    @property
     def h_iwe(self) -> np.ndarray:
+        """Getter for the Ice Water Equivalent Height state variable"""
         return self._outputs.value("glacier__liquid_equivalent_depth")
 
     @h_iwe.setter
     def h_iwe(self, value: np.ndarray) -> None:
+        """Setter for the Ice Water Equivalent Height state variable"""
         self._outputs.set_value("glacier__liquid_equivalent_depth", value)
 
-    @property 
+    @property
     def h_snow(self) -> np.ndarray:
+        """Getter for the Snow Height state variable"""
         return self._outputs.value("snowpack__depth")
 
     @h_snow.setter
     def h_snow(self, value: np.ndarray) -> None:
+        """Setter for the Snow Height state variable"""
         self._outputs.set_value("snowpack__depth", value)
-    
-    @property 
+
+    @property
     def h_ice(self) -> np.ndarray:
+        """Getter for the Ice Height state variable"""
         return self._outputs.value("glacier_ice__thickness")
-    
+
     @h_ice.setter
     def h_ice(self, value: np.ndarray) -> None:
+        """Setter for the Ice Height state variable"""
         self._outputs.set_value("glacier_ice__thickness", value)
 
-    @property 
+    @property
     def M_total(self) -> np.ndarray:
+        """Getter for the melt (runoff) state variable"""
         return self._outputs.value("land_surface_water__runoff_volume_flux")
 
     @M_total.setter
     def M_total(self, value: np.ndarray) -> None:
+        """Setter for the melt (runoff) state variable"""
         self._outputs.set_value("land_surface_water__runoff_volume_flux", value)
 
     def initialize(self, config_file: str | Path) -> None:
@@ -355,9 +383,15 @@ class BmiTopoflowGlacier(BmiBase):
         self.meltrate = np.array([0], dtype="float64")
 
         self._outputs.set_value(name="snowpack__depth", value=np.array([self.cfg.h0_snow], dtype="float64"))
-        self._outputs.set_value(name="glacier_ice__thickness", value=np.array([self.cfg.h0_ice], dtype="float64"))
-        self._outputs.set_value(name="snowpack__liquid-equivalent_depth", value=np.array([self.cfg.h0_swe], dtype="float64"))
-        self._outputs.set_value(name="glacier__liquid_equivalent_depth", value=np.array([self.cfg.h0_iwe], dtype="float64"))
+        self._outputs.set_value(
+            name="glacier_ice__thickness", value=np.array([self.cfg.h0_ice], dtype="float64")
+        )
+        self._outputs.set_value(
+            name="snowpack__liquid-equivalent_depth", value=np.array([self.cfg.h0_swe], dtype="float64")
+        )
+        self._outputs.set_value(
+            name="glacier__liquid_equivalent_depth", value=np.array([self.cfg.h0_iwe], dtype="float64")
+        )
 
         # Glacier Component - convert to 1D arrays
         self.vol_SM = np.array([0], dtype="float64")  # [m3]
@@ -381,7 +415,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.vol_iwe.fill(vol_iwe)
 
         self.vol_M_total = np.array([0], dtype="float64")
-        
+
         # Density ratios - can stay as scalars since they're derived constants
         self.ws_density_ratio = self.rho_H2O / self.rho_snow
         self.wi_density_ratio = self.rho_H2O / self.rho_ice
@@ -1775,18 +1809,23 @@ class BmiTopoflowGlacier(BmiBase):
         return "Topoflow-Glacier"
 
     def get_output_item_count(self) -> int:
+        """Returns the number of output state variables"""
         return len(self._outputs)
 
     def get_input_var_names(self) -> tuple[str, ...]:  # type: ignore
+        """Returns the input state variable names"""
         return tuple(self._dynamic_inputs.names())
 
     def get_output_var_names(self) -> tuple[str, ...]:  # type: ignore
+        """Returns the output state variable names"""
         return tuple(self._outputs.names())
 
     def set_value(self, name: str, src: np.ndarray) -> None:
+        """Sets the value inside the model state"""
         return first_containing(name, self._outputs, self._dynamic_inputs).set_value(name, src)
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray) -> None:
+        """Sets a value within a destination array"""
         return first_containing(name, self._outputs, self._dynamic_inputs).set_value_at_indices(
             name, inds, src
         )
@@ -1878,10 +1917,7 @@ class BmiTopoflowGlacier(BmiBase):
 
 
 def first_containing(name: str, *states: Context) -> Context:
-    """
-    Return the first `State` object containing `name` in `states`.
-    Otherwise, raise `KeyError`.
-    """
+    """Return the first `State` object containing `name` in `states`. Otherwise, raise `KeyError`."""
     for state in states:
         if name in state:
             return state

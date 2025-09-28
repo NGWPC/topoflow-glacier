@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger()
-_configured = False
-
 import getpass
+import logging
 import os
 import sys
 import time
 from datetime import UTC, datetime
+
+logger = logging.getLogger()
+_configured = False
 
 MODULE_NAME = "Topoflow-Glacier"
 LOG_DIR_NGENCERF = "/ngencerf/data"  # ngenCERF log directory string if environement var empty.
@@ -27,6 +26,8 @@ EV_MODULE_LOGFILEPATH = "TOPOFLOW_GLACIER_LOGFILEPATH"  # This modules log full 
 
 
 class CustomFormatter(logging.Formatter):
+    """A custom formatting class for logging"""
+
     LEVEL_NAME_MAP = {
         logging.DEBUG: "DEBUG",
         logging.INFO: "INFO",
@@ -36,6 +37,7 @@ class CustomFormatter(logging.Formatter):
     }
 
     def format(self, record):
+        """Formats the file name"""
         original_levelname = record.levelname
         record.levelname = self.LEVEL_NAME_MAP.get(record.levelno, original_levelname)
         record.levelname_padded = record.levelname.ljust(7)[:7]  # Exactly 7 chars
@@ -45,6 +47,7 @@ class CustomFormatter(logging.Formatter):
 
 
 def create_timestamp(date_only: bool = False, iso: bool = False, append_ms: bool = False) -> str:
+    """Created the timestamp for the log file"""
     now = datetime.now(UTC)
 
     if date_only:
@@ -62,8 +65,10 @@ def create_timestamp(date_only: bool = False, iso: bool = False, append_ms: bool
 
 
 def get_log_file_path():
+    """Returns the file path of the module logs"""
     appendEntries = True
     moduleLogEnvExists = False
+    logFileDir = ""
     moduleEnvVar = os.getenv(EV_MODULE_LOGFILEPATH, "")
     if moduleEnvVar:
         logFilePath = moduleEnvVar
@@ -83,7 +88,7 @@ def get_log_file_path():
                 # Set full log path
                 username = getpass.getuser()
                 if username:
-                    logFieDir = logFieDir + DS + username
+                    logFileDir = logFileDir + DS + username
                 else:
                     logFileDir = logFileDir + DS + create_timestamp(True)
                 # Create directory
@@ -91,7 +96,7 @@ def get_log_file_path():
                     logFilePath = (
                         logFileDir + DS + MODULE_NAME + "_" + create_timestamp() + "." + LOG_FILE_EXT
                     )
-            except Exception:
+            except (OSError, PermissionError):
                 logFilePath = ""
 
     # Ensure log file can be opened and set module env var
@@ -100,8 +105,8 @@ def get_log_file_path():
             if appendEntries:
                 logFile = open(logFilePath, "a")
             else:
-                logFile = open(logFilePath, "w")
-            if moduleLogEnvExists == False:
+                logFile = open(logFilePath, "w")  # noqa: F841
+            if not moduleLogEnvExists:
                 os.environ[EV_MODULE_LOGFILEPATH] = logFilePath
                 print(f"Module {MODULE_NAME} Log File: {logFilePath}", flush=True)
         else:
@@ -114,6 +119,7 @@ def get_log_file_path():
 
 
 def get_log_level() -> str:
+    """Returns the module log level"""
     levelEnvVar = os.getenv(EV_MODULE_LOGLEVEL, "")
     if levelEnvVar:
         print(f"{EV_MODULE_LOGLEVEL}={levelEnvVar}", flush=True)
@@ -124,6 +130,7 @@ def get_log_level() -> str:
 
 
 def translate_ngwpc_log_level(ngwpc_log_level: str) -> str:
+    """Translates a log level to verbiage used by NGWPC"""
     ll = ngwpc_log_level.strip().upper()
     if ll == "SEVERE":
         return "ERROR"
@@ -183,7 +190,7 @@ def configure_logging():
     else:
         print(f"{EV_EWTS_LOGGING} not found.", flush=True)
 
-    if loggingEnabled == False:
+    if not loggingEnabled:
         print(f"Module {MODULE_NAME} Logging DISABLED", flush=True)
         logging.disable(logging.CRITICAL)  # Disables all logs at CRITICAL and below (i.e., everything)
     else:
