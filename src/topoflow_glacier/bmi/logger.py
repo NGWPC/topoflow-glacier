@@ -96,7 +96,7 @@ def get_log_file_path():
                     logFilePath = (
                         logFileDir + DS + MODULE_NAME + "_" + create_timestamp() + "." + LOG_FILE_EXT
                     )
-            except (OSError, PermissionError):
+            except TypeError:
                 logFilePath = ""
 
     # Ensure log file can be opened and set module env var

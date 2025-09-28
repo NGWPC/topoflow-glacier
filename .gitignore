@@ -198,3 +198,4 @@ crash.log
 *.tfplan
 
 src/topoflow_glacier/_version.py
+*.png
