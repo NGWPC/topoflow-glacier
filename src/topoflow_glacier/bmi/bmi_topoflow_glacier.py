@@ -172,7 +172,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     @P.setter
     def P(self, value: np.ndarray) -> None:
-        self._outputs.set_value("atmosphere_water__liquid_equivalent_precipitation_rate", value)
+        self._dynamic_inputs.set_value("atmosphere_water__liquid_equivalent_precipitation_rate", value)
     
     @property 
     def T_air(self) -> np.ndarray:
@@ -180,7 +180,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     @T_air.setter
     def T_air(self, value: np.ndarray) -> None:
-        self._outputs.set_value("lland_surface_air__temperature", value)
+        self._dynamic_inputs.set_value("lland_surface_air__temperature", value)
 
     @property 
     def LW_in(self) -> np.ndarray:
@@ -188,7 +188,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     @LW_in.setter
     def LW_in(self, value: np.ndarray) -> None:
-        self._outputs.set_value("land_surface_radiation~incoming~longwave__energy_flux", value)
+        self._dynamic_inputs.set_value("land_surface_radiation~incoming~longwave__energy_flux", value)
     
     @property 
     def SW_in(self) -> np.ndarray:
@@ -196,7 +196,7 @@ class BmiTopoflowGlacier(BmiBase):
     
     @SW_in.setter
     def SW_in(self, value: np.ndarray) -> None:
-        self._outputs.set_value("land_surface_radiation~incoming~shortwave__energy_flux", value)
+        self._dynamic_inputs.set_value("land_surface_radiation~incoming~shortwave__energy_flux", value)
     
     @property 
     def P_air(self) -> np.ndarray:
@@ -204,7 +204,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     @P_air.setter
     def P_air(self, value: np.ndarray) -> None:
-        self._outputs.set_value("land_surface_air__pressure", value)
+        self._dynamic_inputs.set_value("land_surface_air__pressure", value)
     
     @property 
     def Hum_sp(self) -> np.ndarray:
@@ -212,7 +212,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     @Hum_sp.setter
     def Hum_sp(self, value: np.ndarray) -> None:
-        self._outputs.set_value("atmosphere_air_water~vapor__relative_saturation", value)
+        self._dynamic_inputs.set_value("atmosphere_air_water~vapor__relative_saturation", value)
 
     @property 
     def uz(self) -> np.ndarray:
@@ -220,7 +220,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     @uz.setter
     def uz(self, value: np.ndarray) -> None:
-        self._outputs.set_value("wind_speed_UV", value)
+        self._dynamic_inputs.set_value("wind_speed_UV", value)
     
     @property 
     def SM(self) -> np.ndarray:

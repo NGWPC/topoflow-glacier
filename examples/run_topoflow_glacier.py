@@ -40,6 +40,10 @@ def run_topoflow_glacier():
     output_h_ice = np.zeros(len(precip_data))
     output_m_total = np.zeros(len(precip_data))
 
+    dest_array = np.zeros(1)    
+    logger.info(f"|- Starting Snow Height: {model.get_value("snowpack__depth", dest_array).item()}")
+    logger.info(f"|- Starting Ice Height: {model.get_value("glacier_ice__thickness", dest_array).item()}")
+
     for i in range(len(precip_data)):
         model.set_value(
             "atmosphere_water__liquid_equivalent_precipitation_rate", precip_data[i] * 10 ** (-3)
@@ -72,7 +76,7 @@ def run_topoflow_glacier():
         output_h_iwe[i : i + 1] = dest_array
 
         dest_array = np.zeros(1)
-        model.get_value("snowpack_ice__thickness", dest_array)
+        model.get_value("snowpack__depth", dest_array)
         output_h_snow[i : i + 1] = dest_array
 
         dest_array = np.zeros(1)
@@ -86,13 +90,13 @@ def run_topoflow_glacier():
     logger.debug("Finalizing the BMI...")
     model.finalize()
 
-    logger.info(f"|- Final Snow Melt: {output_snow_melt[-1]}")
-    logger.info(f"|- Final Ice Melt: {output_ice_melt[-1]}")
-    logger.info(f"|- Final Height SWE: {output_h_swe[-1]}")
-    logger.info(f"|- Final Height IWE: {output_h_iwe[-1]}")
-    logger.info(f"|- Final Snow Height: {output_h_snow[-1]}")
-    logger.info(f"|- Final Ice Height: {output_h_ice[-1]}")
-    logger.info(f"|- Final Runoff from melt: {output_m_total[-1]}")
+    logger.info(f"|- Final Timestep Snow Melt: {output_snow_melt[-1]}")
+    logger.info(f"|- Final Timestep Ice Melt: {output_ice_melt[-1]}")
+    logger.info(f"|- Final Timestep Height SWE: {output_h_swe[-1]}")
+    logger.info(f"|- Final Timestep Height IWE: {output_h_iwe[-1]}")
+    logger.info(f"|- Final Timestep Snow Height: {output_h_snow[-1]}")
+    logger.info(f"|- Final Timestep Ice Height: {output_h_ice[-1]}")
+    logger.info(f"|- Final Timestep Runoff from melt: {output_m_total[-1]}")
 
     logger.debug("Finished.")
 
