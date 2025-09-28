@@ -21,7 +21,7 @@ _dynamic_input_vars = [
     ("atmosphere_air_water~vapor__relative_saturation", "kg kg-1"),
     ("atmosphere_water__liquid_equivalent_precipitation_rate", "mm h-1"),
     ("land_surface_radiation~incoming~shortwave__energy_flux", "W m-2"),
-    ("land_surface_air__temperature", "degK"),
+    ("land_surface_air__temperature", "degC"),
     ("wind_speed_UV", "m sec-1"),
 ]
 
