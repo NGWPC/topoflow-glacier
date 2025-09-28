@@ -9,8 +9,9 @@ from numpy.typing import NDArray
 
 from topoflow_glacier.bmi.bmi_base import BmiBase
 from topoflow_glacier.bmi.config import TopoflowGlacierConfig
+from topoflow_glacier.bmi.logger import configure_logging, logger
 from topoflow_glacier.physics import solar_funcs as solar
-from topoflow_glacier.physics.context import build_context
+from topoflow_glacier.physics.context import Context, build_context
 
 __all__ = ["BmiTopoflowGlacier"]
 
@@ -24,26 +25,136 @@ _dynamic_input_vars = [
     ("wind_speed_UV", "m sec-1"),
 ]
 
-_output_vars = [
-    ("land_surface_water__runoff_volume_flux", "m3 s-1"),
+_static_input_vars = [
+    ("basin__mean_of_elevation", "m"),
+    ("basin__mean_of_aspect", "m km-1"),
+    ("basin__mean_of_slope", "m km-1"),
+    ("basin__drainage_area", "km2"),
+    ("basin__initial_height_of_snow", "m"),
+    ("basin__initial_height_of_ice", "m"),
+    ("basin__initial_height_of_snow_water_equivalent", "m"),
+    ("basin__initial_height_of_ice_water_equivalent", "m"),
+    ("basin__air_temperature_rain_snow", "C"),
 ]
 
-# @FRahmani368 Please change this dictionary to map the BMI values to the var names
-_var_name_map = {
-    # ---------------------------------------------------------------
-    "glacier_ice__domain_time_integral_of_melt_volume_flux": "vol_MR",
-    "glacier_ice__melt_volume_flux": "mr_ice",
-    "glacier_top_surface__elevation": "z_ice",
+# --------------   Combined Output Variables   -----------------------------
+_output_vars = [
+    # Meteorological outputs
+    ("atmosphere_bottom_air__mass-per-volume_density", "kg m-3"),
+    ("atmosphere_bottom_air__mass-specific_isobaric_heat_capacity", "J kg-1 K-1"),
+    ("land_surface_net-total-energy__energy_flux", "W m-2"),
+    ("land_surface__temperature", "deg_C"),
+    ("atmosphere_water__snowfall_leq-volume_flux", "m s-1"),
+    ("water-liquid__mass-per-volume_density", "kg m-3"),
+    # Snow-related outputs
+    ("snowpack__domain_time_integral_of_melt_volume_flux", "m3"),
+    ("snowpack__initial_domain_integral_of_liquid-equivalent_depth", "m3"),
+    ("snowpack__domain_integral_of_liquid-equivalent_depth", "m3"),
+    ("snowpack__energy-per-area_cold_content", "J m-2"),
+    ("snowpack__depth", "m"),
+    ("snowpack__initial_depth", "m"),
+    ("snowpack__initial_liquid-equivalent_depth", "m"),
+    ("snowpack__liquid-equivalent_depth", "m"),
+    ("snowpack__melt_volume_flux", "m s-1"),
+    ("snowpack__z_mean_of_mass-per-volume_density", "kg m-3"),
+    ("snowpack__z_mean_of_mass-specific_isobaric_heat_capacity", "J kg-1 K-1"),
+    # Ice-related outputs
+    ("glacier_ice__domain_time_integral_of_melt_volume_flux", "m3"),
+    ("glacier__liquid_equivalent_depth", "m"),
+    ("glacier__initial_domain_integral_of_liquid-equivalent_depth", "m3"),
+    ("glacier__domain_integral_of_liquid-equivalent_depth", "m3"),
+    ("glacier__energy-per-area_cold_content", "J m-2"),
+    ("glacier_ice__thickness", "m"),
+    ("glacier_ice__initial_thickness", "m"),
+    ("glacier__initial_liquid_equivalent_depth", "m"),
+    ("glacier_ice__melt_volume_flux", "m s-1"),
+    ("glacier_ice__mass-per-volume_density", "kg m-3"),
+    ("glacier_ice__mass-specific_isobaric_heat_capacity", "J kg-1 K-1"),
+    ("glacier_top_surface__elevation", "m"),
+    # Combined/total outputs
+    ("cryosphere__melt_volume_flux", "m s-1"),
+    ("cryosphere__domain_time_integral_of_melt_volume_flux", "m3"),
+    ("land_surface_water__runoff_volume_flux", "m3 s-1"),
+    # Grid and time information
+    ("model_grid_cell__x_length", "m"),
+    ("model_grid_cell__y_length", "m"),
+    ("model__time_step", "s"),
+]
+
+# --------------   Complete Name Crosswalk   -----------------------------
+INTERNAL_NAME_CROSSWALK = {
+    # Input variable mappings (BMI name -> internal name)
+    "land_surface_radiation~incoming~longwave__energy_flux": "LW_in",
+    "land_surface_air__pressure": "P_air",
+    "atmosphere_air_water~vapor__relative_saturation": "Hum_sp",
+    "atmosphere_water__liquid_equivalent_precipitation_rate": "P",
+    "land_surface_radiation~incoming~shortwave__energy_flux": "SW_in",
+    "land_surface_air__temperature": "T_air",
+    "wind_speed_UV": "uz",
+    # Meteorological output mappings
+    "atmosphere_bottom_air__mass-per-volume_density": "rho_air",
+    "atmosphere_bottom_air__mass-specific_isobaric_heat_capacity": "Cp_air",
+    "land_surface_net-total-energy__energy_flux": "Q_sum",
+    "land_surface__temperature": "T_surf",
+    "atmosphere_water__snowfall_leq-volume_flux": "P_snow",
+    "water-liquid__mass-per-volume_density": "rho_H2O",
+    # Snow output mappings
+    "snowpack__domain_time_integral_of_melt_volume_flux": "vol_SM",
+    "snowpack__initial_domain_integral_of_liquid-equivalent_depth": "vol_swe_start",
+    "snowpack__domain_integral_of_liquid-equivalent_depth": "vol_swe",
+    "snowpack__energy-per-area_cold_content": "Eccs",
+    "snowpack__depth": "h_snow",
+    "snowpack__initial_depth": "h0_snow",
+    "snowpack__initial_liquid-equivalent_depth": "h0_swe",
+    "snowpack__liquid-equivalent_depth": "h_swe",
+    "snowpack__melt_volume_flux": "SM",
+    "snowpack__z_mean_of_mass-per-volume_density": "rho_snow",
+    "snowpack__z_mean_of_mass-specific_isobaric_heat_capacity": "Cp_snow",
+    # Ice output mappings
+    "glacier_ice__domain_time_integral_of_melt_volume_flux": "vol_IM",
+    "glacier__initial_domain_integral_of_liquid-equivalent_depth": "vol_iwe_start",
+    "glacier__domain_integral_of_liquid-equivalent_depth": "vol_iwe",
+    "glacier__energy-per-area_cold_content": "Ecci",
     "glacier_ice__thickness": "h_ice",
+    "glacier_ice__initial_thickness": "h0_ice",
+    "glacier__initial_liquid_equivalent_depth": "h0_iwe",
+    "glacier__liquid_equivalent_depth": "h_iwe",
+    "glacier_ice__melt_volume_flux": "IM",
+    "glacier_ice__mass-per-volume_density": "rho_ice",
+    "glacier_ice__mass-specific_isobaric_heat_capacity": "Cp_ice",
+    "glacier_top_surface__elevation": "z_ice",
+    "cryosphere__domain_time_integral_of_melt_volume_flux": "vol_M_total",
+    "land_surface_water__runoff_volume_flux": "M_total",
+    # Grid and time mappings
+    "model_grid_cell__x_length": "dx",
+    "model_grid_cell__y_length": "dy",
+    "model__time_step": "dt",
 }
-_input_alias_map = {
-    "atmosphere_water__liquid_equivalent_precipitation_rate": "P",  # precip
-    "land_surface_air__temperature": "T_air",  # air temp
-    # "land_surface_radiation~incoming~shortwave__energy_flux": "SW_in",    # SW down
-    "land_surface_radiation~incoming~longwave__energy_flux": "LW_in",  # LW down
-    "land_surface_air__pressure": "P_air",  # total air pressure
-    "atmosphere_air_water~vapor__relative_saturation": "Hum_sp",  # specific humidity
-    "wind_speed_UV": "uz",  # wind speed
+
+# Reverse mapping (internal name -> BMI name)
+EXTERNAL_NAME_CROSSWALK = {v: k for k, v in INTERNAL_NAME_CROSSWALK.items()}
+
+
+def crosswalk_to_external(name: str):
+    """Return the external name (the name exposed via BMI) for a given internal name."""
+    return INTERNAL_NAME_CROSSWALK[name]
+
+
+def crosswalk_to_interal(name: str):
+    """Return the internal name for a given external name (the name exposed via BMI)."""
+    return EXTERNAL_NAME_CROSSWALK[name]
+
+
+def bmi_array(arr: list[float]) -> np.ndarray:
+    """Trivial wrapper function to ensure the expected numpy array datatype is used."""
+    return np.array(arr, dtype="float64")
+
+
+def load_static_attributes(cfg: dict[str, Any], state: Context):
+    for external_name in state.names():
+        internal_name = crosswalk_to_interal(external_name)
+        value = cfg[internal_name]
+        state.set_value(external_name, bmi_array([value]))
 
 
 class BmiTopoflowGlacier(BmiBase):
@@ -53,19 +164,154 @@ class BmiTopoflowGlacier(BmiBase):
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._outputs = build_context(_output_vars)
         self._timestep: int = 0
+        configure_logging()
+
+    @property
+    def P(self) -> np.ndarray:
+        """Getter for the precipitation dynamic input state variable"""
+        return self._dynamic_inputs.value("atmosphere_water__liquid_equivalent_precipitation_rate")
+
+    @P.setter
+    def P(self, value: np.ndarray) -> None:
+        """Setter for the precipitation dynamic input state variable"""
+        self._dynamic_inputs.set_value("atmosphere_water__liquid_equivalent_precipitation_rate", value)
+
+    @property
+    def T_air(self) -> np.ndarray:
+        """Getter for the Air Temperature dynamic input state variable"""
+        return self._dynamic_inputs.value("land_surface_air__temperature")
+
+    @T_air.setter
+    def T_air(self, value: np.ndarray) -> None:
+        """Setter for the Air Temperature dynamic input state variable"""
+        self._dynamic_inputs.set_value("lland_surface_air__temperature", value)
+
+    @property
+    def LW_in(self) -> np.ndarray:
+        """Getter for the Long Wave Radiation dynamic input state variable"""
+        return self._dynamic_inputs.value("land_surface_radiation~incoming~longwave__energy_flux")
+
+    @LW_in.setter
+    def LW_in(self, value: np.ndarray) -> None:
+        """Setter for the Long Wave Radiation dynamic input state variable"""
+        self._dynamic_inputs.set_value("land_surface_radiation~incoming~longwave__energy_flux", value)
+
+    @property
+    def SW_in(self) -> np.ndarray:
+        """Getter for the Short Wave Radiation dynamic input state variable"""
+        return self._dynamic_inputs.value("land_surface_radiation~incoming~shortwave__energy_flux")
+
+    @SW_in.setter
+    def SW_in(self, value: np.ndarray) -> None:
+        """Setter for the Short Wave Radiation dynamic input state variable"""
+        self._dynamic_inputs.set_value("land_surface_radiation~incoming~shortwave__energy_flux", value)
+
+    @property
+    def P_air(self) -> np.ndarray:
+        """Getter for the Air Pressure dynamic input state variable"""
+        return self._dynamic_inputs.value("land_surface_air__pressure")
+
+    @P_air.setter
+    def P_air(self, value: np.ndarray) -> None:
+        """Setter for the Air Pressure dynamic input state variable"""
+        self._dynamic_inputs.set_value("land_surface_air__pressure", value)
+
+    @property
+    def Hum_sp(self) -> np.ndarray:
+        """Getter for the Humidity input state variable"""
+        return self._dynamic_inputs.value("atmosphere_air_water~vapor__relative_saturation")
+
+    @Hum_sp.setter
+    def Hum_sp(self, value: np.ndarray) -> None:
+        """Setter for the Humidity input state variable"""
+        self._dynamic_inputs.set_value("atmosphere_air_water~vapor__relative_saturation", value)
+
+    @property
+    def uz(self) -> np.ndarray:
+        """Getter for the XY Wind state variable"""
+        return self._dynamic_inputs.value("wind_speed_UV")
+
+    @uz.setter
+    def uz(self, value: np.ndarray) -> None:
+        """Setter for the XY Wind state variable"""
+        self._dynamic_inputs.set_value("wind_speed_UV", value)
+
+    @property
+    def SM(self) -> np.ndarray:
+        """Getter for the Snow Melt state variable"""
+        return self._outputs.value("snowpack__melt_volume_flux")
+
+    @SM.setter
+    def SM(self, value: np.ndarray) -> None:
+        """Setter for the Snow Melt state variable"""
+        self._outputs.set_value("snowpack__melt_volume_flux", value)
+
+    @property
+    def IM(self) -> np.ndarray:
+        """Getter for the Ice Melt state variable"""
+        return self._outputs.value("glacier_ice__melt_volume_flux")
+
+    @IM.setter
+    def IM(self, value: np.ndarray) -> None:
+        """Setter for the Ice Melt state variable"""
+        self._outputs.set_value("glacier_ice__melt_volume_flux", value)
+
+    @property
+    def h_swe(self) -> np.ndarray:
+        """Getter for the Snow Water Equivalent Height state variable"""
+        return self._outputs.value("snowpack__liquid-equivalent_depth")
+
+    @h_swe.setter
+    def h_swe(self, value: np.ndarray) -> None:
+        """Setter for the Snow Water Equivalent Height state variable"""
+        self._outputs.set_value("snowpack__liquid-equivalent_depth", value)
+
+    @property
+    def h_iwe(self) -> np.ndarray:
+        """Getter for the Ice Water Equivalent Height state variable"""
+        return self._outputs.value("glacier__liquid_equivalent_depth")
+
+    @h_iwe.setter
+    def h_iwe(self, value: np.ndarray) -> None:
+        """Setter for the Ice Water Equivalent Height state variable"""
+        self._outputs.set_value("glacier__liquid_equivalent_depth", value)
+
+    @property
+    def h_snow(self) -> np.ndarray:
+        """Getter for the Snow Height state variable"""
+        return self._outputs.value("snowpack__depth")
+
+    @h_snow.setter
+    def h_snow(self, value: np.ndarray) -> None:
+        """Setter for the Snow Height state variable"""
+        self._outputs.set_value("snowpack__depth", value)
+
+    @property
+    def h_ice(self) -> np.ndarray:
+        """Getter for the Ice Height state variable"""
+        return self._outputs.value("glacier_ice__thickness")
+
+    @h_ice.setter
+    def h_ice(self, value: np.ndarray) -> None:
+        """Setter for the Ice Height state variable"""
+        self._outputs.set_value("glacier_ice__thickness", value)
+
+    @property
+    def M_total(self) -> np.ndarray:
+        """Getter for the melt (runoff) state variable"""
+        return self._outputs.value("land_surface_water__runoff_volume_flux")
+
+    @M_total.setter
+    def M_total(self, value: np.ndarray) -> None:
+        """Setter for the melt (runoff) state variable"""
+        self._outputs.set_value("land_surface_water__runoff_volume_flux", value)
 
     def initialize(self, config_file: str | Path) -> None:
-        """Intialize the BMI model with config, datum transformer, and datum sync class.
-
-        Args:
-            config (str): _description_
-        """
-        # read yaml
+        """Initialize the BMI model with config."""
+        # Read config
         with open(config_file) as f:
             config = yaml.safe_load(f)
 
-        #
-        # load into pydantic model and save in class for querying
         self.cfg = TopoflowGlacierConfig.model_validate(config)
         self.hours_per_day = np.float64(24)
         self.seconds_per_Day = np.float64(24) * 3600
@@ -84,46 +330,38 @@ class BmiTopoflowGlacier(BmiBase):
         self.slopes = self.cfg.slope
         self.P_snow_3day_watershed = np.zeros(int(3 * self.hours_per_day / self.dt), dtype="float64")
 
-        # TODO create state variables for these
-        self.P = np.array(0, dtype="float64")
-        self.T_air = np.array(0, dtype="float64")  # bottom air temperature
-        self.T_surf = np.array(0, dtype="float64")  # T_surf = land_surface temperature
-        self.RH = np.array(0, dtype="float64")
-        self.p0 = np.array(0, dtype="float64")  # atm pressure mbar
-        self.z = np.array(10.0, dtype="float64")  # the height the wind is read
-        self.uz = np.array(0, dtype="float64")  # wind speed at height z.
-        self.cloud_factor = np.array(0, dtype="float64")
-        self.canopy_factor = np.array(0, dtype="float64")
-        self.P_rain = np.array(0, dtype="float64")
-        self.P_snow = np.array(0, dtype="float64")
-        self.e_air = np.array(0, dtype="float64")
-        self.e_surf = np.array(0, dtype="float64")
-        self.em_air = np.array(0, dtype="float64")
-        # self.SW_in = np.array(0, dtype="float64")
-        self.LW_in = np.array(0, dtype="float64")
-        self.Qn_SW = np.array(0, dtype="float64")
-        self.Qn_LW = np.array(0, dtype="float64")
-        self.Q_sum = np.array(0, dtype="float64")
-        self.Qc = np.array(0, dtype="float64")
-        self.Qa = np.array(0, dtype="float64")
-        self.P_max = np.array(0, dtype="float64")
-        self.vol_P = np.array(0, dtype="float64")
-        self.vol_PR = np.array(0, dtype="float64")
-        self.vol_PS = np.array(0, dtype="float64")
-        self.Qn_SW = np.array(0, dtype="float64")
-        self.Qn_LW = np.array(0, dtype="float64")
-        self.Qn_tot = np.array(0, dtype="float64")
-        self.Q_sum = np.array(0, dtype="float64")
-        self.Qe = np.array(0, dtype="float64")
-        self.e_air = np.array(0, dtype="float64")
-        self.e_surf = np.array(0, dtype="float64")
-        self.em_air = np.array(0, dtype="float64")
-        self.Qc = np.array(0, dtype="float64")
-        self.Qa = np.array(0, dtype="float64")
-        self.P_air = np.array(0, dtype="float64")
-        self.Hum_sp = np.array(0, dtype="float64")
+        self.T_surf = np.array([0], dtype="float64")  # T_surf = land_surface temperature
+        self.RH = np.array([0], dtype="float64")
+        self.p0 = np.array([0], dtype="float64")  # atm pressure mbar
+        self.z = np.array([10.0], dtype="float64")  # the height the wind is read
+        self.cloud_factor = np.array([0], dtype="float64")
+        self.canopy_factor = np.array([0], dtype="float64")
+        self.P_rain = np.array([0], dtype="float64")
+        self.P_snow = np.array([0], dtype="float64")
+        self.e_air = np.array([0], dtype="float64")
+        self.e_surf = np.array([0], dtype="float64")
+        self.em_air = np.array([0], dtype="float64")
+        self.Qn_SW = np.array([0], dtype="float64")
+        self.Qn_LW = np.array([0], dtype="float64")
+        self.Q_sum = np.array([0], dtype="float64")
+        self.Qc = np.array([0], dtype="float64")
+        self.Qa = np.array([0], dtype="float64")
+        self.P_max = np.array([0], dtype="float64")
+        self.vol_P = np.array([0], dtype="float64")
+        self.vol_PR = np.array([0], dtype="float64")
+        self.vol_PS = np.array([0], dtype="float64")
+        self.Qn_SW = np.array([0], dtype="float64")
+        self.Qn_LW = np.array([0], dtype="float64")
+        self.Qn_tot = np.array([0], dtype="float64")
+        self.Q_sum = np.array([0], dtype="float64")
+        self.Qe = np.array([0], dtype="float64")
+        self.e_air = np.array([0], dtype="float64")
+        self.e_surf = np.array([0], dtype="float64")
+        self.em_air = np.array([0], dtype="float64")
+        self.Qc = np.array([0], dtype="float64")
+        self.Qa = np.array([0], dtype="float64")
 
-        # Ice component
+        # Ice component - constants can stay as scalars
         self.rho_H2O = np.float64(self.cfg.rho_H2O)  # [kg/m**3]
         self.rho_ice = np.float64(self.cfg.rho_ice)  # [kg/m**3]
         self.Cp_ice = np.float64(self.cfg.Cp_ice)  # [J/(kg * K)]
@@ -131,58 +369,67 @@ class BmiTopoflowGlacier(BmiBase):
         self.grad_Tz = np.float64(self.cfg.geothermal_gradient)  # [deg_C/m]
         self.g = np.float64(self.cfg.g)  # [m/s**2]
 
-        # Glacier Component
+        # Glacier Component - constants can stay as scalars
         self.rho_snow = np.float64(self.cfg.rho_snow)  # [kg/m**3]
         self.Cp_snow = np.float64(self.cfg.Cp_snow)  # [J kg-1 K-1]
         self.Lf = np.float64(self.cfg.Lf)  # [J kg-1]
-        self.T0 = np.array(self.cfg.T0, dtype="float64")  # [deg C]
-        self.h_active_layer = np.array(self.cfg.h_active_layer, dtype="float64")  # [m]
         self.T_rain_snow = np.float64(self.cfg.T_rain_snow)
 
-        self.h_snow = np.array(self.cfg.h0_snow, dtype="float64")  # [m]
-        self.h_ice = np.array(self.cfg.h0_ice, dtype="float64")  # [m]
-        self.h_swe = np.array(self.cfg.h0_swe, dtype="float64")  # [m]
-        self.h_iwe = np.array(self.cfg.h0_iwe, dtype="float64")  # [m]
-        self.mr_ice = np.array(0, dtype="float64")
-        self.vol_MR = np.array(0, dtype="float64")
-        self.meltrate = np.array(0, dtype="float64")
+        # State variables - convert to 1D arrays
+        self.T0 = np.array([self.cfg.T0], dtype="float64")  # [deg C]
+        self.h_active_layer = np.array([self.cfg.h_active_layer], dtype="float64")  # [m]
+        self.mr_ice = np.array([0], dtype="float64")
+        self.vol_MR = np.array([0], dtype="float64")
+        self.meltrate = np.array([0], dtype="float64")
 
-        # Glacier Component
-        self.SM = np.array(0, dtype="float64")
-        self.IM = np.array(0, dtype="float64")
-        self.M_total = np.array(0, dtype="float64")
-        self.vol_SM = np.array(0, dtype="float64")  # [m3]
-        self.vol_IM = np.array(0, dtype="float64")
-        self.vol_M_total = np.array(0, dtype="float64")
-        self.vol_swe = np.array(0, dtype="float64")  # [m3]
-        self.vol_swe_start = np.array(0, dtype="float64")
-        self.vol_iwe = np.array(0, dtype="float64")
-        self.vol_iwe_start = np.array(0, dtype="float64")
-        self.albedo = np.array(0.3, dtype="float64")
+        self._outputs.set_value(name="snowpack__depth", value=np.array([self.cfg.h0_snow], dtype="float64"))
+        self._outputs.set_value(
+            name="glacier_ice__thickness", value=np.array([self.cfg.h0_ice], dtype="float64")
+        )
+        self._outputs.set_value(
+            name="snowpack__liquid-equivalent_depth", value=np.array([self.cfg.h0_swe], dtype="float64")
+        )
+        self._outputs.set_value(
+            name="glacier__liquid_equivalent_depth", value=np.array([self.cfg.h0_iwe], dtype="float64")
+        )
+
+        # Glacier Component - convert to 1D arrays
+        self.vol_SM = np.array([0], dtype="float64")  # [m3]
+        self.vol_IM = np.array([0], dtype="float64")
+        self.vol_M_total = np.array([0], dtype="float64")
+        self.vol_swe = np.array([0], dtype="float64")  # [m3]
+        self.vol_swe_start = np.array([0], dtype="float64")
+        self.vol_iwe = np.array([0], dtype="float64")
+        self.vol_iwe_start = np.array([0], dtype="float64")
+        self.albedo = np.array([0.3], dtype="float64")
 
         # Update Snowpack Water Volume
         volume = np.float64(self.h_swe * self.cfg.da)  # [m^3]
         vol_swe = np.sum(volume)
         self.vol_swe.fill(vol_swe)
-        self.vol_IM = np.array(0, dtype="float64")  # (m3)
+        self.vol_IM = np.array([0], dtype="float64")  # (m3)
 
         # Update Ice Water Equivalent
         volume = np.float64(self.h_iwe * self.cfg.da)  # [m^3]
         vol_iwe = np.sum(volume)
         self.vol_iwe.fill(vol_iwe)
 
-        self.vol_M_total = np.array(0, dtype="float64")
+        self.vol_M_total = np.array([0], dtype="float64")
+
+        # Density ratios - can stay as scalars since they're derived constants
         self.ws_density_ratio = self.rho_H2O / self.rho_snow
         self.wi_density_ratio = self.rho_H2O / self.rho_ice
 
-        self.T0_cc = self.T0  # synonyms
+        # Cold content calculations
+        self.T0_cc = self.T0  # synonyms - both are now 1D arrays
         T_snow = self.T_surf
         del_T = self.T0_cc - T_snow
         self.Eccs = (self.rho_snow * self.Cp_snow) * self.h_snow * del_T
-        self.Eccs = np.maximum(self.Eccs, 0.0)
+        self.Eccs = np.maximum(self.Eccs, np.array([0.0]))
         self.Ecci = (self.rho_ice * self.Cp_ice) * self.h_active_layer * del_T
-        self.Ecci = np.maximum(self.Ecci, 0.0)
+        self.Ecci = np.maximum(self.Ecci, np.array([0.0]))
 
+        # Time and datetime variables - these can stay as scalars
         self.start_year, self.start_month, self.start_day, self.start_hour = self._parse_yyyymmddhh(
             self.cfg.start_time
         )
@@ -252,6 +499,47 @@ class BmiTopoflowGlacier(BmiBase):
     def finalize(self) -> None:
         """Clean up any internal resources of the model"""
         pass
+
+    def update_until(self, time: float) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        time : float
+            the current time
+        """
+        if time <= self.get_current_time():
+            current_time = self.get_current_time()
+            logger.warning(f"no update performed: {time=} <= {current_time=}")
+            return None
+
+        n_steps, remainder = divmod(time - self.get_current_time(), self.get_time_step())
+
+        if remainder != 0:
+            logger.warning(f"time is not multiple of time step size. updating until: {time - remainder=} ")
+
+        for _ in range(int(n_steps)):
+            self.update()
+
+    def get_start_time(self) -> float:
+        """Returns the start time
+
+        Returns
+        -------
+        float
+            the start time
+        """
+        return 0
+
+    def get_current_time(self) -> float:
+        """Returns the current timestep
+
+        Returns
+        -------
+        float
+            The current time
+        """
+        return self._timestep * self._timestep_size_s
 
     def _parse_yyyymmddhh(self, s: str) -> tuple[int, int, int, int]:
         """Accepts 'YYYYMMDD-HH' (e.g., '20231001-01') or 'YYYYMMDDHH'. Returns (year, month, day, hour, dt)."""
@@ -849,9 +1137,9 @@ class BmiTopoflowGlacier(BmiBase):
         # ------------------------------------------------------------------
         w_bad = np.logical_or((beta < 0), (beta > np.pi / 2))
         if w_bad:
-            print("ERROR: In met_base.py, some slope angles are out")
-            print("       of range.  Returning without setting beta.")
-            print()
+            logger.error(
+                "ERROR: In met_base.py, some slope angles are out of range.  Returning without setting beta."
+            )
             return
 
         self.beta = beta
@@ -1520,69 +1808,27 @@ class BmiTopoflowGlacier(BmiBase):
         """
         return "Topoflow-Glacier"
 
-    #
-    # def get_input_item_count(self) -> int:
-    #     """Number of model input variables
-    #
-    #     Returns
-    #     -------
-    #         int: number of input variables
-    #     """
-    #     return len(input_names)
-
-    def get_input_var_names(self) -> tuple[str, ...]:  # type: ignore[override]
-        """The names of each input variables
-
-        Returns
-        -------
-            tuple[str, ...]: iterable tuple of input variable names
-        """
-        return self.input_names
-
     def get_output_item_count(self) -> int:
-        """Number of model output variables
+        """Returns the number of output state variables"""
+        return len(self._outputs)
 
-        Returns
-        -------
-            int: number of output variables
-        """
-        return len(self.output_names)
+    def get_input_var_names(self) -> tuple[str, ...]:  # type: ignore
+        """Returns the input state variable names"""
+        return tuple(self._dynamic_inputs.names())
 
-    def get_output_var_names(self) -> tuple[str, ...]:  # type: ignore[override]
-        """The names of each output variable
+    def get_output_var_names(self) -> tuple[str, ...]:  # type: ignore
+        """Returns the output state variable names"""
+        return tuple(self._outputs.names())
 
-        Returns
-        -------
-            tuple[str, ...]: iterable tuple of output variable names
-        """
-        return self.output_names
+    def set_value(self, name: str, src: np.ndarray) -> None:
+        """Sets the value inside the model state"""
+        return first_containing(name, self._outputs, self._dynamic_inputs).set_value(name, src)
 
-    # @FRahmani368 Please work on this some more to map forcings into the variables
-    def set_value(self, name: str, src: Any) -> None:
-        """Sets and input or output value
-
-        Args:
-            name (str): name of value
-            src (Any): value to set
-
-        Raises
-        ------
-            ValueError: If name does not exist
-        """
-        ## outputs variables mapping
-        if name in _var_name_map:
-            self._output[name] = src
-        elif name in self._dynamic_inputs.names():
-            self._dynamic_inputs.set_value(name, src)
-            # dynamic input vaiable mapping
-            if name in _input_alias_map:
-                attr = _input_alias_map.get(name)
-                # Create or update the attribute (array or scalar is fine)
-                setattr(self, attr, src)
-        else:
-            raise ValueError(
-                f"Variable {name} does not exist input or output variables.  User getters to view options."
-            )
+    def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray) -> None:
+        """Sets a value within a destination array"""
+        return first_containing(name, self._outputs, self._dynamic_inputs).set_value_at_indices(
+            name, inds, src
+        )
 
     def get_value(self, name: str, dest: NDArray) -> NDArray:
         """_Copies_ a variable's np.np.ndarray into `dest` and returns `dest`."""
@@ -1591,7 +1837,10 @@ class BmiTopoflowGlacier(BmiBase):
             if not isinstance(value, np.ndarray):
                 dest[:] = np.array(value).flatten()
             else:
-                dest[:] = self.get_value_ptr(name).flatten()
+                try:
+                    dest[:] = self.get_value_ptr(name).flatten()
+                except TypeError:
+                    dest[:] = self.get_value_ptr(name)
         except Exception as e:
             raise RuntimeError(f"Could not return value {name} as flattened array") from e
 
@@ -1599,12 +1848,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     def get_value_ptr(self, name: str) -> NDArray:
         """Gets value in native form if exists in inputs or outputs"""
-        try:
-            return self.output[name]
-        except KeyError:
-            return self.input[name]
-        except KeyError as e:  # NOQA: B025
-            raise KeyError(f"{name} is not a known variable") from e
+        return first_containing(name, self._outputs, self._dynamic_inputs).value(name)
 
     def get_var_itemsize(self, name: str) -> int:
         """Size, in bytes, of a single element of the variable name
@@ -1670,3 +1914,11 @@ class BmiTopoflowGlacier(BmiBase):
             self.start_datetime += pd.to_timedelta(time, unit="d")
         else:
             raise ValueError(f"Unsupported time_units: {time_units}")
+
+
+def first_containing(name: str, *states: Context) -> Context:
+    """Return the first `State` object containing `name` in `states`. Otherwise, raise `KeyError`."""
+    for state in states:
+        if name in state:
+            return state
+    raise KeyError(f"unknown name: {name!s}")

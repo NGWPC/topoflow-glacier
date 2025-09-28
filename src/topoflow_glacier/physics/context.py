@@ -19,6 +19,7 @@ class Context:
     """A class to hold a collection of variables representing model conditions"""
 
     def __init__(self, vars: Iterable[Var]):
+        """Initialization Function"""
         self._name_mapping: dict[str, Var] = {var.name: var for var in vars}
 
     def unit(self, name: str) -> str:
@@ -30,7 +31,7 @@ class Context:
         return self._name_mapping[name].value
 
     def value_at_indices(self, name: str, dest: np.ndarray, indices: np.ndarray) -> np.ndarray:
-        # This must copy into dest!!!
+        """Copies the specific pointer values into a destination array"""
         assert dest.shape[0] >= indices.shape[0], "dest smaller than indices"
         src = self.value(name)
         for i in range(indices.shape[0]):
@@ -39,18 +40,22 @@ class Context:
         return dest
 
     def set_value(self, name: str, value: np.ndarray):
+        """Sets the internal state value"""
         self._name_mapping[name].value[:] = value
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray):
+        """Sets the specific pointer values into a destination array"""
         assert src.shape[0] >= inds.shape[0], "inds larger than src"
         arr = self.value(name)
         for i in range(inds.shape[0]):
             arr[inds[i]] = src[i]
 
     def names(self) -> Iterable[str]:
+        """Returns an iterator for all variables in the model state"""
         yield from self._name_mapping
 
     def vars(self) -> Iterable[Var]:
+        """Returns all variables in the model state"""
         yield from self._name_mapping.values()
 
     def __contains__(self, name: str) -> bool:
@@ -58,12 +63,26 @@ class Context:
         return name in self._name_mapping
 
     def __iter__(self) -> Iterator[Var]:
+        """Returns an iterable of all variables"""
         return iter(self.vars())
 
     def __len__(self) -> int:
+        """Returns the length of all names in the Model State"""
         return len(self._name_mapping)
 
 
 def build_context(vars: Iterable[tuple[str, str]]) -> Context:
+    """Builds the Context object to save model state
+
+    Parameters
+    ----------
+    vars: Iterable[tuple[str, str]]
+        The input variables with name, unit format
+
+    Returns
+    -------
+    Context
+        The completed state object
+    """
     g = (Var(name=name, unit=unit, value=np.array([0.0], dtype=np.float64)) for (name, unit) in vars)
     return Context(vars=g)
