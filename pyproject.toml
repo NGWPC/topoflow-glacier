@@ -30,6 +30,7 @@ maintainers = [
 
 dependencies = [
   "bmipy==2.0.1",
+  "matplotlib==3.10.6",
   "numpy==2.3.2",
   "pandas==2.3.1",
   "pydantic==2.11.4",
