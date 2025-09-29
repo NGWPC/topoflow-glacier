@@ -139,7 +139,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
 
         # Snow height as line
         _ = ax1.plot(time_series, output_h_snow, "b-", linewidth=2, label="Snow Height")
-        ax1.set_ylabel("Snow Height (m)", color="b")
+        ax1.set_ylabel("Snow Height (m)")
         ax1.tick_params(axis="y")
         ax1.grid(True, alpha=0.3)
 
@@ -152,7 +152,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
             alpha=0.7,
             label="Snow Melt",
         )
-        ax1_melt.set_ylabel("Snow Melt (m/hr)", color="grey")
+        ax1_melt.set_ylabel("Snow Melt (m/hr)")
         ax1_melt.tick_params(axis="y")
 
         ax1.set_title("Snow Height and Snow Melt")
@@ -163,7 +163,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
 
         # Ice height as line
         _ = ax2.plot(time_series, output_h_ice, "r-", linewidth=2, label="Ice Height")
-        ax2.set_ylabel("Ice Height (m)", color="r")
+        ax2.set_ylabel("Ice Height (m)")
         ax2.tick_params(axis="y")
         ax2.grid(True, alpha=0.3)
 
@@ -176,7 +176,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
             alpha=0.7,
             label="Ice Melt",
         )
-        ax2_melt.set_ylabel("Ice Melt (m/hr)", color="orange")
+        ax2_melt.set_ylabel("Ice Melt (m/hr)")
         ax2_melt.tick_params(axis="y")
 
         ax2.set_title("Ice Height and Ice Melt")
@@ -211,14 +211,12 @@ def run_topoflow_glacier(make_plot: bool) -> None:
 
         ax_precip = ax_flow.twinx()
 
-        _ = ax_flow.plot(time_series, output_m_total, "r-", linewidth=2, label="Runoff")
+        _ = ax_flow.plot(time_series, output_m_total, "r-", linewidth=1, label="Runoff")
         ax_flow.set_xlabel("Time")
         ax_flow.set_ylabel("Flow (m³/s)", color="r")
         ax_flow.tick_params(axis="y", labelcolor="r")
         ax_flow.grid(True, alpha=0.3)
 
-        # Plot precipitation as bars (inverted, similar to your reference image)
-        # Convert precip from mm/hr to mm for display
         _ = ax_precip.bar(
             time_series,
             precip_data,
