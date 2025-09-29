@@ -111,7 +111,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
     logger.debug("Finalizing the BMI...")
     model.finalize()
 
-    output_m_total = output_m_total * model.da_m2  # converting m/hr melt to m3/hr
+    output_m_total = output_m_total * model.da_m2  # converting m/sec melt to m3/sec
 
     logger.info(f"|- Final Timestep Relative Humitidy: {output_rh[-1]}")
     logger.info(f"|- Final Timestep Snow Melt: {output_snow_melt[-1]}")
@@ -152,7 +152,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
             alpha=0.7,
             label="Snow Melt",
         )
-        ax1_melt.set_ylabel("Snow Melt (m/hr)", color="grey")
+        ax1_melt.set_ylabel("Snow Melt (m/sec)", color="grey")
         ax1_melt.tick_params(axis="y")
 
         ax1.set_title("Snow Height and Snow Melt")
@@ -176,7 +176,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
             alpha=0.7,
             label="Ice Melt",
         )
-        ax2_melt.set_ylabel("Ice Melt (m/hr)", color="orange")
+        ax2_melt.set_ylabel("Ice Melt (m/sec)", color="orange")
         ax2_melt.tick_params(axis="y")
 
         ax2.set_title("Ice Height and Ice Melt")

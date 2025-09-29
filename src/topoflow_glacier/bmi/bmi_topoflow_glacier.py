@@ -455,9 +455,9 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_ice_meltrate()
         self.enforce_max_ice_meltrate()
         self.update_IM_integral()
+        self.update_iwe()  # relies on previous timestep's swe value
         self.update_combined_meltrate()
 
-        self.update_iwe()  # relies on previous timestep's swe value
         self.update_ws_density_ratio()
         self.update_snow_depth()
         self.update_wi_density_ratio()
@@ -1365,12 +1365,13 @@ class BmiTopoflowGlacier(BmiBase):
         E_rem = np.maximum(E_in - self.Eccs, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
 
-        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]   # TODO: I guess it is m/hour
+        M = Qm / (self.rho_H2O * self.Lf) # [m/s]   # TODO: I guess it is m/hour
         if np.size(self.SM) == 1:
             M = np.float64(M)  # avoid type change
             self.SM.fill(M)
         else:
             self.SM = M
+
 
     def update_ice_meltrate(self):
         """Compute energy-balance meltrate
@@ -1419,7 +1420,7 @@ class BmiTopoflowGlacier(BmiBase):
         E_rem = np.maximum(E_in - self.Ecci, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
 
-        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]  TODO: m/hour? also shouldn't it be self.rho_ice?
+        M = Qm / (self.rho_H2O * self.Lf) # [m/s]  TODO: m/hour? also shouldn't it be self.rho_ice?
         IM = np.maximum(M, np.float64(0))
         self.IM = np.where((self.h_swe == 0) & (self.previous_swe == 0), IM, np.float64(0))
 
@@ -1438,7 +1439,7 @@ class BmiTopoflowGlacier(BmiBase):
         # runoff, so combine the IM and SM variables to create Mtotal.
         # ---------------------------------------------------------
         """  # noqa: D205
-        M_total = self.IM + self.SM
+        M_total = self.IM + self.SM + self.P_rain /3600    # TODO: self.P_rain is here because there is no other module to handle P_rain at this moment
 
         self.M_total = M_total
 
@@ -1481,14 +1482,14 @@ class BmiTopoflowGlacier(BmiBase):
         """Update mass total for SM, sum over all pixels
         # ------------------------------------------------
         """  # noqa: D205
-        volume = np.float64(self.SM * self.da_m2 * self.dt)  # [m^3]
+        volume = np.float64(self.SM * self.da_m2 * self.dt * 3600)  # [m^3]
         self.vol_SM += np.sum(volume)  #### np.sum vs. sum ???
 
     def update_IM_integral(self):
         """Update mass total for IM, sum over all pixels
         # ------------------------------------------------
         """  # noqa: D205
-        volume = np.float64(self.IM * self.da_m2 * self.dt)
+        volume = np.float64(self.IM * self.da_m2 * self.dt * 3600)
         self.vol_IM += np.sum(volume)
 
     def update_snowfall_cold_content(self):
@@ -1596,8 +1597,10 @@ class BmiTopoflowGlacier(BmiBase):
         # Decrease snow water equivalent due to melting
         # Note that SM depends partly on h_snow.
         # ------------------------------------------------
-        dh2_swe = self.SM * self.dt
-        np.minimum(self.SM, self.h_swe, out=self.SM)     # SM cannot be more than h_swe
+        SM_one_hour = self.SM * 3600
+        np.minimum(SM_one_hour, self.h_swe, out=SM_one_hour)     # SM cannot be more than h_swe
+        self.SM = SM_one_hour / 3600
+        dh2_swe = self.SM * self.dt * 3600
         self.h_swe -= dh2_swe
         np.maximum(self.h_swe, np.float64(0), self.h_swe)  # (in place)
 
@@ -1605,8 +1608,10 @@ class BmiTopoflowGlacier(BmiBase):
         """Decrease ice water equivalent due to melting
         ------------------------------------------------
         """  # noqa: D205
-        dh2_iwe = self.IM * self.dt
-        np.minimum(self.IM, self.h_iwe, out=self.IM)  # IM cannot be more than h_iwe
+        IM_one_hour = self.IM * 3600
+        np.minimum(IM_one_hour, self.h_iwe, out=IM_one_hour)  # IM cannot be more than h_iwe
+        self.IM = IM_one_hour / 3600
+        dh2_iwe = self.IM * self.dt * 3600
         self.h_iwe -= dh2_iwe
         np.maximum(self.h_iwe, np.float64(0), self.h_iwe)  # (in place)
 
