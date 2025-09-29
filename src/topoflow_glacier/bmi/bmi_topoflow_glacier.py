@@ -1597,6 +1597,7 @@ class BmiTopoflowGlacier(BmiBase):
         # Note that SM depends partly on h_snow.
         # ------------------------------------------------
         dh2_swe = self.SM * self.dt
+        np.minimum(self.SM, self.h_swe, out=self.SM)     # SM cannot be more than h_swe
         self.h_swe -= dh2_swe
         np.maximum(self.h_swe, np.float64(0), self.h_swe)  # (in place)
 
@@ -1605,6 +1606,7 @@ class BmiTopoflowGlacier(BmiBase):
         ------------------------------------------------
         """  # noqa: D205
         dh2_iwe = self.IM * self.dt
+        np.minimum(self.IM, self.h_iwe, out=self.IM)  # IM cannot be more than h_iwe
         self.h_iwe -= dh2_iwe
         np.maximum(self.h_iwe, np.float64(0), self.h_iwe)  # (in place)
 
