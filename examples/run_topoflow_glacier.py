@@ -104,6 +104,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
         model.get_value("glacier_ice__thickness", dest_array)
         output_h_ice[i : i + 1] = dest_array
 
+        dest_array = np.zeros(1)
         model.get_value("land_surface_water__runoff_volume_flux", dest_array)
         output_m_total[i : i + 1] = dest_array
 
@@ -123,8 +124,9 @@ def run_topoflow_glacier(make_plot: bool) -> None:
     logger.info(f"|- Final Timestep Runoff from melt: {output_m_total[-1]}")
 
 
-    ## convolution on outputs:
-    # weights = np.array([0.05, 0.1, 0.15, 0.25, 0.15, 0.1, 0.1, 0.05, 0.05])
+    #NOTE: To compare with the original TOPOFLOW we're using a convolution approach to mock routing
+    # The original topoflow has a routing module included for flow
+    # This will not ship with the code, but be used for a benchmark
     weights = np.zeros(20) + 0.05
     output_m_total = np.convolve(output_m_total, weights, mode="full")
     output_m_total = output_m_total[:len(output_h_ice)]
