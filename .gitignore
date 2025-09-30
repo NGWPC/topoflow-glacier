@@ -199,3 +199,4 @@ crash.log
 
 src/topoflow_glacier/_version.py
 *.png
+*.txt

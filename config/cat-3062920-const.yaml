@@ -3,7 +3,7 @@ forcing_file: data/cat-3062920.csv
 n_steps: 10
 dt: 1
 start_time: "2013032000"
-end_time: "2013052000"
+end_time: "2013040500"
 da: 11.418749923500716
 slope: 88.582729
 aspect: 242.8644693769529
