@@ -1365,13 +1365,12 @@ class BmiTopoflowGlacier(BmiBase):
         E_rem = np.maximum(E_in - self.Eccs, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
 
-        M = Qm / (self.rho_H2O * self.Lf) # [m/s]   # TODO: I guess it is m/hour
+        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]   # TODO: I guess it is m/hour
         if np.size(self.SM) == 1:
             M = np.float64(M)  # avoid type change
             self.SM.fill(M)
         else:
             self.SM = M
-
 
     def update_ice_meltrate(self):
         """Compute energy-balance meltrate
@@ -1420,7 +1419,7 @@ class BmiTopoflowGlacier(BmiBase):
         E_rem = np.maximum(E_in - self.Ecci, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
 
-        M = Qm / (self.rho_H2O * self.Lf) # [m/s]  TODO: m/hour? also shouldn't it be self.rho_ice?
+        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]  TODO: m/hour? also shouldn't it be self.rho_ice?
         IM = np.maximum(M, np.float64(0))
         self.IM = np.where((self.h_swe == 0) & (self.previous_swe == 0), IM, np.float64(0))
 
@@ -1439,7 +1438,9 @@ class BmiTopoflowGlacier(BmiBase):
         # runoff, so combine the IM and SM variables to create Mtotal.
         # ---------------------------------------------------------
         """  # noqa: D205
-        M_total = self.IM + self.SM + self.P_rain /3600    # TODO: self.P_rain is here because there is no other module to handle P_rain at this moment
+        M_total = (
+            self.IM + self.SM + self.P_rain / 3600
+        )  # TODO: self.P_rain is here because there is no other module to handle P_rain at this moment
 
         self.M_total = M_total
 
@@ -1598,7 +1599,7 @@ class BmiTopoflowGlacier(BmiBase):
         # Note that SM depends partly on h_snow.
         # ------------------------------------------------
         SM_one_hour = self.SM * 3600
-        np.minimum(SM_one_hour, self.h_swe, out=SM_one_hour)     # SM cannot be more than h_swe
+        np.minimum(SM_one_hour, self.h_swe, out=SM_one_hour)  # SM cannot be more than h_swe
         self.SM = SM_one_hour / 3600
         dh2_swe = self.SM * self.dt * 3600
         self.h_swe -= dh2_swe
@@ -1898,4 +1899,3 @@ def first_containing(name: str, *states: Context) -> Context:
         if name in state:
             return state
     raise KeyError(f"unknown name: {name!s}")
-

@@ -123,13 +123,12 @@ def run_topoflow_glacier(make_plot: bool) -> None:
     logger.info(f"|- Final Timestep Ice Height: {output_h_ice[-1]}")
     logger.info(f"|- Final Timestep Runoff from melt: {output_m_total[-1]}")
 
-
-    #NOTE: To compare with the original TOPOFLOW we're using a convolution approach to mock routing
+    # NOTE: To compare with the original TOPOFLOW we're using a convolution approach to mock routing
     # The original topoflow has a routing module included for flow
     # This will not ship with the code, but be used for a benchmark
     weights = np.zeros(20) + 0.05
     output_m_total = np.convolve(output_m_total, weights, mode="full")
-    output_m_total = output_m_total[:len(output_h_ice)]
+    output_m_total = output_m_total[: len(output_h_ice)]
     if make_plot:
         from datetime import timedelta
 

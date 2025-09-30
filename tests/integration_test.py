@@ -5,9 +5,6 @@ including initialization, forcing data processing, model updates,
 and output validation.
 """
 
-import tempfile
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -58,6 +55,7 @@ def test_environment(tmp_path, sample_config, sample_forcing_data):
 
     return config_file, sample_forcing_data
 
+
 @pytest.fixture
 def sample_outputs():
     return np.astype(np.load(here() / "tests/data/output_m_total.npy"), np.float64)
@@ -104,32 +102,18 @@ class TestTopoflowGlacierIntegration:
         for i in range(len(precip_data)):
             model.set_value(
                 "atmosphere_water__liquid_equivalent_precipitation_rate",
-                np.array([precip_data[i] * 10 ** (-3)])
+                np.array([precip_data[i] * 10 ** (-3)]),
+            )
+            model.set_value("land_surface_air__temperature", np.array([model.K_to_C + temp_data[i]]))
+            model.set_value(
+                "land_surface_radiation~incoming~longwave__energy_flux", np.array([long_wave_radiation[i]])
             )
             model.set_value(
-                "land_surface_air__temperature",
-                np.array([model.K_to_C + temp_data[i]])
+                "land_surface_radiation~incoming~shortwave__energy_flux", np.array([short_wave_radiation[i]])
             )
-            model.set_value(
-                "land_surface_radiation~incoming~longwave__energy_flux",
-                np.array([long_wave_radiation[i]])
-            )
-            model.set_value(
-                "land_surface_radiation~incoming~shortwave__energy_flux",
-                np.array([short_wave_radiation[i]])
-            )
-            model.set_value(
-                "land_surface_air__pressure",
-                np.array([air_pressure[i]])
-            )
-            model.set_value(
-                "atmosphere_air_water~vapor__relative_saturation",
-                np.array([air_water_vapor[i]])
-            )
-            model.set_value(
-                "wind_speed_UV",
-                np.array([wind_speed.values[i]])
-            )
+            model.set_value("land_surface_air__pressure", np.array([air_pressure[i]]))
+            model.set_value("atmosphere_air_water~vapor__relative_saturation", np.array([air_water_vapor[i]]))
+            model.set_value("wind_speed_UV", np.array([wind_speed.values[i]]))
 
             model.update()
 
@@ -201,6 +185,7 @@ class TestTopoflowGlacierIntegration:
 
         model.finalize()
 
+
 class TestTopoflowGlacierEdgeCases:
     """Test edge cases and error conditions."""
 
@@ -214,17 +199,19 @@ class TestTopoflowGlacierEdgeCases:
 
         forcing_file = tmp_path / "test_forcing.csv"
         dates = pd.date_range(start="2013-03-20 00:00:00", periods=25, freq="h")
-        forcing_df = pd.DataFrame({
-            "Time": dates,
-            "RAINRATE": [0.0] * 25,
-            "Q2D": [0.003] * 25,
-            "T2D": [275.0] * 25,
-            "U2D": [1.0] * 25,
-            "V2D": [1.0] * 25,
-            "LWDOWN": [300.0] * 25,
-            "SWDOWN": [100.0] * 25,
-            "PSFC": [88000.0] * 25,
-        })
+        forcing_df = pd.DataFrame(
+            {
+                "Time": dates,
+                "RAINRATE": [0.0] * 25,
+                "Q2D": [0.003] * 25,
+                "T2D": [275.0] * 25,
+                "U2D": [1.0] * 25,
+                "V2D": [1.0] * 25,
+                "LWDOWN": [300.0] * 25,
+                "SWDOWN": [100.0] * 25,
+                "PSFC": [88000.0] * 25,
+            }
+        )
         forcing_df.to_csv(forcing_file, index=False)
         sample_config["forcing_file"] = str(forcing_file)
 
