@@ -12,7 +12,6 @@ class TopoflowGlacierConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     site_prefix: str = Field(description="File prefix for the study site")
     forcing_file: str = Field(description="The forcing .csv file to be used")
-    n_steps: int = Field(description="Number of time steps")
     dt: int = Field(ge=0, description="Timestep for snowmelt process [hour]")
     start_time: str = Field(description="The start time for the model run [YYYYMMDDHH]")
     end_time: str = Field(description="The end time for the model run [YYYYMMDDHH]")

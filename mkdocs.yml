@@ -1,6 +1,6 @@
 site_name: topoflow-glacier
 site_description: Running the glacier module from topoflow
-repo_url: https://github.com/NGWPC/topoflow-glacier
+repo_url: https://github.com/NOAA-OWP/topoflow-glacier
 repo_name: NGWPC/topoflow-glacier
 theme:
   name: material
@@ -48,3 +48,6 @@ plugins:
 nav:
   - Home:
     - index.md
+  - User Guide:
+    - user_guide/index.md
+    - Configs: user_guide/config.md
