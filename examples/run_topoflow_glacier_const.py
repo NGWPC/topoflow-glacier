@@ -18,7 +18,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
     configure_logging()
     logger.info(f"Running Topoflow-Glacier version: {__version__}")
 
-    bmi_cfg_file = here() / "config/cat-3062920.yaml"
+    bmi_cfg_file = here() / "config/cat-3062920-const.yaml"
 
     logger.debug("Creating an instance of an BMI_LSTM model object")
     model = BmiTopoflowGlacier()
@@ -61,6 +61,8 @@ def run_topoflow_glacier(make_plot: bool) -> None:
     logger.info(f"|- Starting Snow Height: {model.get_value('snowpack__depth', dest_array).item()}")
     logger.info(f"|- Starting Ice Height: {model.get_value('glacier_ice__thickness', dest_array).item()}")
 
+    precip_data[:] = 3.0
+    temp_data[:] = 10.0 - model.K_to_C
     for i in range(len(precip_data)):
         model.set_value(
             "atmosphere_water__liquid_equivalent_precipitation_rate", precip_data[i] * 10 ** (-3)
@@ -144,7 +146,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
         ax1_melt = ax1.twinx()  # Create second y-axis for snow melt
 
         # Snow height as line
-        _ = ax1.plot(time_series, output_h_snow, "b-", linewidth=2, label="Snow Height")
+        _ = ax1.plot(time_series, output_h_snow, "b-", linewidth=1, label="Snow Height")
         ax1.set_ylabel("Snow Height (m)", color="b")
         ax1.tick_params(axis="y")
         ax1.grid(True, alpha=0.3)
@@ -208,7 +210,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
         plt.tight_layout()
 
         # Save the first figure
-        output_file1 = here() / "examples/snow_ice_height_melt.png"
+        output_file1 = here() / "examples/snow_ice_height_melt_const.png"
         output_file1.parent.mkdir(exist_ok=True)
         plt.savefig(output_file1, dpi=300, bbox_inches="tight")
         logger.info(f"2-panel snow/ice height and melt plot saved to: {output_file1}")
@@ -217,7 +219,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
 
         ax_precip = ax_flow.twinx()
 
-        _ = ax_flow.plot(time_series, output_m_total, "r-", linewidth=2, label="Runoff")
+        _ = ax_flow.plot(time_series, output_m_total, "r-", linewidth=1, label="Runoff")
         ax_flow.set_xlabel("Time")
         ax_flow.set_ylabel("Flow (m³/s)", color="r")
         ax_flow.tick_params(axis="y", labelcolor="r")
@@ -225,16 +227,16 @@ def run_topoflow_glacier(make_plot: bool) -> None:
 
         # Plot precipitation as bars (inverted, similar to your reference image)
         # Convert precip from mm/hr to mm for display
-        _ = ax_precip.bar(
-            time_series,
-            precip_data,
-            width=timedelta(hours=0.8),
-            color="blue",
-            alpha=0.7,
-            label="Precipitation",
-        )
-        ax_precip.set_ylabel("Rainfall depth (mm)", color="b")
-        ax_precip.tick_params(axis="y", labelcolor="b")
+        # _ = ax_precip.bar(
+        #     time_series,
+        #     precip_data,
+        #     width=timedelta(hours=0.8),
+        #     color="blue",
+        #     alpha=0.7,
+        #     label="Precipitation",
+        # )
+        # ax_precip.set_ylabel("Rainfall depth (mm)", color="b")
+        # ax_precip.tick_params(axis="y", labelcolor="b")
 
         # Invert the precipitation axis to show bars going downward from top
         ax_precip.invert_yaxis()
@@ -257,7 +259,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
         plt.tight_layout()
 
         # Save the second figure
-        output_file2 = here() / "examples/runoff_hydrograph_with_precip.png"
+        output_file2 = here() / "examples/runoff_hydrograph_with_precip_const.png"
         plt.savefig(output_file2, dpi=300, bbox_inches="tight")
         logger.info(f"Hydrograph with precipitation saved to: {output_file2}")
 
