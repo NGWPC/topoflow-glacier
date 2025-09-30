@@ -27,7 +27,15 @@ def run_topoflow_glacier(make_plot: bool) -> None:
     model.initialize(bmi_cfg_file)
 
     logger.debug("Gathering input data")
-    df = pd.read_csv(here() / model.cfg.forcing_file)
+    _df = pd.read_csv(here() / model.cfg.forcing_file)
+    _df["Time"] = pd.to_datetime(_df["Time"])
+
+    start_datetime = pd.to_datetime(model.cfg.start_time, format="%Y%m%d%H")
+    end_datetime = pd.to_datetime(model.cfg.end_time, format="%Y%m%d%H")
+
+    logger.info(f"Filtering forcings from {start_datetime} to {end_datetime}")
+
+    df = _df[(_df["Time"] >= start_datetime) & (_df["Time"] <= end_datetime)].copy()
 
     logger.debug("Loop through the inputs, set the forcing values, and update the model...")
     precip_data = df["RAINRATE"].values
@@ -42,6 +50,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
 
     output_snow_melt = np.zeros(len(precip_data))
     output_ice_melt = np.zeros(len(precip_data))
+    output_rh = np.zeros(len(precip_data))
     output_h_swe = np.zeros(len(precip_data))
     output_h_iwe = np.zeros(len(precip_data))
     output_h_snow = np.zeros(len(precip_data))
@@ -67,6 +76,10 @@ def run_topoflow_glacier(make_plot: bool) -> None:
 
         # Similiar output saving to:
         # https://github.com/NGWPC/lstm/blob/341be45ed854442459ad2f4ed05532b5eb5406fe/lstm/run_lstm_bmi.py#L52C1-L54C27
+        dest_array = np.zeros(1)
+        model.get_value("atmosphere_bottom_air_water-vapor__relative_saturation", dest_array)
+        output_rh[i : i + 1] = dest_array
+
         dest_array = np.zeros(1)
         model.get_value("snowpack__melt_volume_flux", dest_array)
         output_snow_melt[i : i + 1] = dest_array
@@ -100,6 +113,7 @@ def run_topoflow_glacier(make_plot: bool) -> None:
 
     output_m_total = output_m_total * model.da_m2  # converting m/hr melt to m3/hr
 
+    logger.info(f"|- Final Timestep Relative Humitidy: {output_rh[-1]}")
     logger.info(f"|- Final Timestep Snow Melt: {output_snow_melt[-1]}")
     logger.info(f"|- Final Timestep Ice Melt: {output_ice_melt[-1]}")
     logger.info(f"|- Final Timestep Height SWE: {output_h_swe[-1]}")
@@ -114,32 +128,130 @@ def run_topoflow_glacier(make_plot: bool) -> None:
         import matplotlib.dates as mdates
         import matplotlib.pyplot as plt
 
-        start_date = model.start_datetime
-        time_series = [start_date + timedelta(hours=i) for i in range(len(output_m_total))]
+        # Use the actual timestamps from the filtered DataFrame instead of generating them
+        time_series = df["Time"].tolist()
 
-        # Create the hydrograph
-        _, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(time_series, output_m_total, "b-", linewidth=1.5)
+        # Create the first figure with 2 vertically stacked subplots
+        _, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10))
 
-        # Formatting
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Runoff (m³/hr)")
-        ax.set_title("Topoflow-Glacier Cat-3062920 Hydrograph")
-        ax.grid(True, alpha=0.3)
+        # Top subplot: Snow Height (line) and Snow Melt (bars)
+        ax1_melt = ax1.twinx()  # Create second y-axis for snow melt
 
-        # Format x-axis dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(time_series) // 10)))
-        plt.xticks(rotation=45)
+        # Snow height as line
+        _ = ax1.plot(time_series, output_h_snow, "b-", linewidth=2, label="Snow Height")
+        ax1.set_ylabel("Snow Height (m)")
+        ax1.tick_params(axis="y")
+        ax1.grid(True, alpha=0.3)
 
-        # Tight layout to prevent label cutoff
+        # Snow melt as bars
+        _ = ax1_melt.bar(
+            time_series,
+            output_snow_melt,
+            width=timedelta(hours=12),
+            color="grey",
+            alpha=0.7,
+            label="Snow Melt",
+        )
+        ax1_melt.set_ylabel("Snow Melt (m/hr)")
+        ax1_melt.tick_params(axis="y")
+
+        ax1.set_title("Snow Height and Snow Melt")
+        ax1.set_xlabel("Time")
+
+        # Bottom subplot: Ice Height (line) and Ice Melt (bars)
+        ax2_melt = ax2.twinx()  # Create second y-axis for ice melt
+
+        # Ice height as line
+        _ = ax2.plot(time_series, output_h_ice, "r-", linewidth=2, label="Ice Height")
+        ax2.set_ylabel("Ice Height (m)")
+        ax2.tick_params(axis="y")
+        ax2.grid(True, alpha=0.3)
+
+        # Ice melt as bars
+        _ = ax2_melt.bar(
+            time_series,
+            output_ice_melt,
+            width=timedelta(hours=12),
+            color="orange",
+            alpha=0.7,
+            label="Ice Melt",
+        )
+        ax2_melt.set_ylabel("Ice Melt (m/hr)")
+        ax2_melt.tick_params(axis="y")
+
+        ax2.set_title("Ice Height and Ice Melt")
+        ax2.set_xlabel("Time")
+
+        # Format x-axis labels for both subplots
+        for ax in [ax1, ax2]:
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=10))  # Every 10 days
+            ax.xaxis.set_minor_locator(mdates.DayLocator(interval=2))  # Every 2 days for minor ticks
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+
+        # Add legends for both subplots
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines1_melt, labels1_melt = ax1_melt.get_legend_handles_labels()
+        ax1.legend(lines1 + lines1_melt, labels1 + labels1_melt, loc="upper right")
+
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        lines2_melt, labels2_melt = ax2_melt.get_legend_handles_labels()
+        ax2.legend(lines2 + lines2_melt, labels2 + labels2_melt, loc="upper right")
+
+        # Tight layout to prevent overlap
         plt.tight_layout()
 
-        # Save the plot
-        output_file = here() / "examples/runoff_hydrograph.png"
-        output_file.parent.mkdir(exist_ok=True)  # Create output directory if it doesn't exist
-        plt.savefig(output_file, dpi=300, bbox_inches="tight")
-        logger.info(f"Hydrograph saved to: {output_file}")
+        # Save the first figure
+        output_file1 = here() / "examples/snow_ice_height_melt.png"
+        output_file1.parent.mkdir(exist_ok=True)
+        plt.savefig(output_file1, dpi=300, bbox_inches="tight")
+        logger.info(f"2-panel snow/ice height and melt plot saved to: {output_file1}")
+
+        _, ax_flow = plt.subplots(figsize=(12, 6))
+
+        ax_precip = ax_flow.twinx()
+
+        _ = ax_flow.plot(time_series, output_m_total, "r-", linewidth=1, label="Runoff")
+        ax_flow.set_xlabel("Time")
+        ax_flow.set_ylabel("Flow (m³/s)", color="r")
+        ax_flow.tick_params(axis="y", labelcolor="r")
+        ax_flow.grid(True, alpha=0.3)
+
+        _ = ax_precip.bar(
+            time_series,
+            precip_data,
+            width=timedelta(hours=0.8),
+            color="blue",
+            alpha=0.7,
+            label="Precipitation",
+        )
+        ax_precip.set_ylabel("Rainfall depth (mm)", color="b")
+        ax_precip.tick_params(axis="y", labelcolor="b")
+
+        # Invert the precipitation axis to show bars going downward from top
+        ax_precip.invert_yaxis()
+
+        # Format x-axis with better tick spacing and formatting
+        ax_flow.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+        ax_flow.xaxis.set_major_locator(mdates.DayLocator(interval=7))  # Weekly ticks
+        ax_flow.xaxis.set_minor_locator(mdates.DayLocator(interval=1))  # Daily minor ticks
+        plt.setp(ax_flow.xaxis.get_majorticklabels(), rotation=45, ha="right")
+
+        # Set title
+        ax_flow.set_title("Topoflow-Glacier Cat-3062920 Hydrograph with Precipitation")
+
+        # Add legend
+        lines1, labels1 = ax_flow.get_legend_handles_labels()
+        lines2, labels2 = ax_precip.get_legend_handles_labels()
+        ax_flow.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
+
+        # Tight layout
+        plt.tight_layout()
+
+        # Save the second figure
+        output_file2 = here() / "examples/runoff_hydrograph_with_precip.png"
+        plt.savefig(output_file2, dpi=300, bbox_inches="tight")
+        logger.info(f"Hydrograph with precipitation saved to: {output_file2}")
 
     logger.debug("Finished.")
 

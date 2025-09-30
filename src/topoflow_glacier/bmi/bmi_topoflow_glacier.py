@@ -33,6 +33,7 @@ _output_vars = [
     ("glacier__liquid_equivalent_depth", "m"),
     ("glacier_ice__melt_volume_flux", "m s-1"),
     ("land_surface_water__runoff_volume_flux", "m s-1"),
+    ("atmosphere_bottom_air_water-vapor__relative_saturation", "-"),
 ]
 
 # --------------   Complete Name Crosswalk   -----------------------------
@@ -53,6 +54,7 @@ INTERNAL_NAME_CROSSWALK = {
     "glacier__liquid_equivalent_depth": "h_iwe",
     "glacier_ice__melt_volume_flux": "IM",
     "land_surface_water__runoff_volume_flux": "M_total",
+    "atmosphere_bottom_air_water-vapor__relative_saturation": "RH",
     # Unused variables:
     # "atmosphere_bottom_air__mass-per-volume_density": "rho_air",
     # "atmosphere_bottom_air__mass-specific_isobaric_heat_capacity": "Cp_air",
@@ -259,6 +261,16 @@ class BmiTopoflowGlacier(BmiBase):
         """Setter for the melt (runoff) state variable"""
         self._outputs.set_value("land_surface_water__runoff_volume_flux", value)
 
+    @property
+    def RH(self) -> np.ndarray:
+        """Getter for the relative humidity state variable"""
+        return self._outputs.value("atmosphere_bottom_air_water-vapor__relative_saturation")
+
+    @RH.setter
+    def RH(self, value: np.ndarray) -> None:
+        """Setter for the relative humidity state variable"""
+        self._outputs.set_value("atmosphere_bottom_air_water-vapor__relative_saturation", value)
+
     def initialize(self, config_file: str | Path) -> None:
         """Initialize the BMI model with config."""
         # Read config
@@ -391,9 +403,12 @@ class BmiTopoflowGlacier(BmiBase):
         self.julian_day = solar.Julian_Day(
             self.start_month, self.start_day, self.start_hour, year=self.start_year
         )
-        self.start_datetime = pd.to_datetime(
+        self.start_time = pd.to_datetime(
             solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
         )
+        self.start_datetime = pd.to_datetime(
+            solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
+        )  # Topoflow enumerates the time via start_datetime
 
     def update(self) -> None:
         """Update the model based on inputs (only meterological and glacier currently)"""
@@ -1582,6 +1597,7 @@ class BmiTopoflowGlacier(BmiBase):
         # Note that SM depends partly on h_snow.
         # ------------------------------------------------
         dh2_swe = self.SM * self.dt
+        np.minimum(self.SM, self.h_swe, out=self.SM)     # SM cannot be more than h_swe
         self.h_swe -= dh2_swe
         np.maximum(self.h_swe, np.float64(0), self.h_swe)  # (in place)
 
@@ -1590,6 +1606,7 @@ class BmiTopoflowGlacier(BmiBase):
         ------------------------------------------------
         """  # noqa: D205
         dh2_iwe = self.IM * self.dt
+        np.minimum(self.IM, self.h_iwe, out=self.IM)  # IM cannot be more than h_iwe
         self.h_iwe -= dh2_iwe
         np.maximum(self.h_iwe, np.float64(0), self.h_iwe)  # (in place)
 
@@ -1686,6 +1703,7 @@ class BmiTopoflowGlacier(BmiBase):
         -------------------------------------------
         """  # noqa: D205
         h_snow = self.h_swe * self.ws_density_ratio
+
         if np.ndim(self.h_snow) == 0:
             h_snow = np.float64(h_snow)  ### (from 0D array to scalar)
             self.h_snow.fill(h_snow)  ### (mutable scalar)
@@ -1875,3 +1893,4 @@ def first_containing(name: str, *states: Context) -> Context:
         if name in state:
             return state
     raise KeyError(f"unknown name: {name!s}")
+
