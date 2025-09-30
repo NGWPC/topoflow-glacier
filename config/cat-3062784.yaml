@@ -1,6 +1,5 @@
 site_prefix: cat-3062920
 forcing_file: data/cat-3062784.csv
-n_steps: 10
 dt: 1
 start_time: 2013032000
 end_time: 2013033123
