@@ -89,15 +89,13 @@ INTERNAL_NAME_CROSSWALK = {
 # Reverse mapping (internal name -> BMI name)
 EXTERNAL_NAME_CROSSWALK = {v: k for k, v in INTERNAL_NAME_CROSSWALK.items()}
 
+def crosswalk_to_external(internal_name: str):
+    """Return the external (BMI) name for a given internal name."""
+    return EXTERNAL_NAME_CROSSWALK[internal_name]
 
-def crosswalk_to_external(name: str):
-    """Return the external name (the name exposed via BMI) for a given internal name."""
-    return INTERNAL_NAME_CROSSWALK[name]
-
-
-def crosswalk_to_interal(name: str):
-    """Return the internal name for a given external name (the name exposed via BMI)."""
-    return EXTERNAL_NAME_CROSSWALK[name]
+def crosswalk_to_interal(external_name: str):
+    """Return the internal name for a given external (BMI) name."""
+    return INTERNAL_NAME_CROSSWALK[external_name]
 
 
 def bmi_array(arr: list[float]) -> np.ndarray:
@@ -128,9 +126,10 @@ class BmiTopoflowGlacier(BmiBase):
 
     @P.setter
     def P(self, value: np.ndarray) -> None:
-        """Setter for the precipitation dynamic input state variable"""
-        self._dynamic_inputs.set_value("atmosphere_water__liquid_equivalent_precipitation_rate", value)
-
+        # BMI advertises mm h-1, but computations expect m s-1
+        # initialize() defines: self.mmph_to_mps = 1/3_600_000
+        self._dynamic_inputs.set_value("atmosphere_water__liquid_equivalent_precipitation_rate",
+                                   value * self.mmph_to_mps)
     @property
     def T_air(self) -> np.ndarray:
         """Getter for the Air Temperature dynamic input state variable"""
@@ -139,7 +138,8 @@ class BmiTopoflowGlacier(BmiBase):
     @T_air.setter
     def T_air(self, value: np.ndarray) -> None:
         """Setter for the Air Temperature dynamic input state variable"""
-        self._dynamic_inputs.set_value("lland_surface_air__temperature", value)
+        self._dynamic_inputs.set_value("land_surface_air__temperature", value)
+
 
     @property
     def LW_in(self) -> np.ndarray:
@@ -410,6 +410,28 @@ class BmiTopoflowGlacier(BmiBase):
             solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
         )  # Topoflow enumerates the time via start_datetime
 
+        # --- BMI time bookkeeping ---
+        self._timestep = 0                           # integer step counter
+        self._timestep_size_s = float(self.dt)       # seconds per update()
+
+        # Parse start/end datetimes from config (use your existing fields if present)
+        # Accept either pre-parsed fields or the YYYYmmddHH strings in cfg.{start,end}_time
+        if hasattr(self, "start_year"):
+            self.start_datetime = pd.to_datetime(
+                solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
+            )
+        else:
+            self.start_datetime = pd.to_datetime(self.cfg.start_time, format="%Y%m%d%H")
+
+        if hasattr(self, "end_year"):
+            self.end_datetime = pd.to_datetime(
+                solar.get_datetime_str(self.end_year, self.end_month, self.end_day, self.end_hour, 0, 0)
+            )
+        else:
+            self.end_datetime = pd.to_datetime(self.cfg.end_time, format="%Y%m%d%H")
+
+
+
     def update(self) -> None:
         """Update the model based on inputs (only meterological and glacier currently)"""
         self.update_atm_pressure_from_elevation(T_C=True, MBAR=True)
@@ -463,6 +485,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_wi_density_ratio()
         self.update_ice_depth()
         self.update_snowpack_cold_content()
+        self._timestep += 1
 
     def finalize(self) -> None:
         """Clean up any internal resources of the model"""
@@ -498,6 +521,16 @@ class BmiTopoflowGlacier(BmiBase):
             the start time
         """
         return 0
+
+    def get_time_step(self) -> float:
+        return self._timestep_size_s
+
+    def get_time_units(self) -> str:
+        return "s"
+
+    def get_end_time(self) -> float:
+        # seconds from start to end
+        return float((self.end_datetime - self.start_datetime).total_seconds())
 
     def get_current_time(self) -> float:
         """Returns the current timestep
@@ -1891,6 +1924,61 @@ class BmiTopoflowGlacier(BmiBase):
             self.start_datetime += pd.to_timedelta(time, unit="d")
         else:
             raise ValueError(f"Unsupported time_units: {time_units}")
+
+    def get_var_units(self, name: str) -> str:
+        """
+        Return the unit string for a given BMI variable name.
+        NOTE:
+        - Precip is advertised in mm h^-1 (the setter should convert to m s^-1 internally).
+        - Fluxes are m s^-1; energy fluxes are W m^-2; depths/thicknesses are m.
+        """
+        units = {
+            # --- Inputs ---
+            "atmosphere_water__liquid_equivalent_precipitation_rate": "mm h-1",
+            "land_surface_air__temperature": "degC",
+            "land_surface_radiation~incoming~longwave__energy_flux": "W m-2",
+            "land_surface_radiation~incoming~shortwave__energy_flux": "W m-2",
+            "land_surface_air__pressure": "Pa",
+            "atmosphere_air_water~vapor__relative_saturation": "1",   # dimensionless (fraction)
+            "wind_speed_UV": "m s-1",
+
+            # --- Outputs / States ---
+            "snowpack__melt_volume_flux": "m s-1",
+            "glacier_ice__melt_volume_flux": "m s-1",
+            "land_surface_water__runoff_volume_flux": "m s-1",
+
+            "snowpack__depth": "m",
+            "glacier_ice__thickness": "m",
+            "snowpack__liquid-equivalent_depth": "m",
+            "glacier__liquid_equivalent_depth": "m",
+        }
+        try:
+            return units[name]
+        except KeyError:
+            raise ValueError(f"Unknown variable for units: {name!r}")
+
+
+    def get_var_itemcount(self, name: str) -> int:
+        """
+        Number of values for the given variable.
+        Return 1 for scalar/site-mean variables. If/when you expose gridded
+        variables, compute from the variable's grid id and grid size.
+        """
+        # Simple scalar case:
+        return 1
+        # Robust (enable later if you add gridded vars):
+        # grid_id = self.get_var_grid(name)
+        # return int(self.get_grid_size(grid_id))
+
+
+    def get_input_item_count(self) -> int:
+        """Aggregate item count across all input vars."""
+        return int(sum(self.get_var_itemcount(v) for v in self.get_input_var_names()))
+
+    def get_output_item_count(self) -> int:
+        """Aggregate item count across all output vars."""
+        return int(sum(self.get_var_itemcount(v) for v in self.get_output_var_names()))
+
 
 
 def first_containing(name: str, *states: Context) -> Context:
