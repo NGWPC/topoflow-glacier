@@ -453,72 +453,93 @@ class BmiTopoflowGlacier(BmiBase):
         else:
             self.end_datetime = pd.to_datetime(self.cfg.end_time, format="%Y%m%d%H")
 
+
         # --- derive total steps and end-of-run time in seconds ---
         total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
-        # If forcing times are inclusive of both start and end rows, you have N rows and N-1 hourly steps.
-        # We derive an integer number of steps that fits within [start, end] at size dt.
-        self._n_steps = int(np.floor(total_seconds / self._timestep_size_s + 1e-12))
-        # Define model end as exactly _n_steps * dt (exclusive end). Adapter may request exactly this time.
+        self._n_steps = int(np.ceil(total_seconds / self._timestep_size_s - 1e-12))
+        # Exclusive end; adapter may request exactly this time.
         self._run_end_time_s = float(self._n_steps) * self._timestep_size_s
 
 
+
     def update(self) -> None:
-        """Update the model based on inputs (only meterological and glacier currently)"""
+        """Advance the model by exactly one fixed time step (dt), without exceeding end time."""
+        # Do not step beyond declared end time (treat tiny FP slack as 'at end')
+        if self.get_current_time() >= (self.get_end_time() - 1e-12):
+            return
+
+        # -------------------------
+        # Meteorology / Energy part
+        # -------------------------
         self.update_atm_pressure_from_elevation(T_C=True, MBAR=True)
-        # Update Meteorological Component
-        self.update_P_integral()  # update vol_P (leq)
+        self.update_P_integral()                      # update vol_P (leq)
         self.update_P_max()
         self.update_P_rain()
         self.update_P_snow()
-        self.update_P_rain_integral()  # update vol_PR
-        self.update_P_snow_integral()  # update vol_PS (leq)
-        self.update_saturation_vapor_pressure(MBAR=True)  # for air
+        self.update_P_rain_integral()                 # update vol_PR
+        self.update_P_snow_integral()                 # update vol_PS (leq)
+        self.update_saturation_vapor_pressure(MBAR=True)           # for air
         self.update_vapor_pressure_from_spHum_AirPre(MBAR=True)
         self.update_RH()
         # self.update_vapor_pressure()
-        self.update_dew_point()  ###
+        self.update_dew_point()
         self.update_T_surf()
         self.update_saturation_vapor_pressure(MBAR=True, SURFACE=True)  # for surface
         self.update_bulk_richardson_number()
         self.update_bulk_aero_conductance()
         self.update_sensible_heat_flux()
-        self.update_precipitable_water_content()  ###
-        self.update_vapor_pressure(SURFACE=True)  ########
-        self.update_latent_heat_flux()  # (uses e_air and e_surf)
-        self.update_conduction_heat_flux()  # currently assumed zero
-        self.update_advection_heat_flux()  # currently assumed zero
-        self.update_julian_day(time_units="hour")
+        self.update_precipitable_water_content()
+        self.update_vapor_pressure(SURFACE=True)
+        self.update_latent_heat_flux()                # (uses e_air and e_surf)
+        self.update_conduction_heat_flux()            # currently assumed zero
+        self.update_advection_heat_flux()             # currently assumed zero
+        self.update_julian_day(time_units="seconds")
         self.update_albedo(method="aging")
         self.set_aspect_angle()
         self.set_slope_angle()
         self.update_net_shortwave_radiation()
         self.update_em_air()
         self.update_net_longwave_radiation()
-        self.update_net_energy_flux()  # (at the end)
+        self.update_net_energy_flux()                 # (at the end)
 
-        # Update Snow & Glacier components
+        # -------------------------
+        # Snow & Glacier components
+        # -------------------------
         self.extract_previous_swe()
         self.extract_previous_snow_depth()
-        self.update_snow_meltrate()  # (meltrate = SM)
-        self.enforce_max_snow_meltrate()  # (before SM integral!)
+        self.update_snow_meltrate()                   # (meltrate = SM)
+        self.enforce_max_snow_meltrate()              # (before SM integral!)
         self.update_SM_integral()
         self.update_swe()
         self.update_snowfall_cold_content()
         self.update_ice_meltrate()
         self.enforce_max_ice_meltrate()
         self.update_IM_integral()
-        self.update_iwe()  # relies on previous timestep's swe value
-        self.update_combined_meltrate()
+        self.update_iwe()                              # relies on previous timestep's swe value
+        self.update_combined_meltrate()                # sets self.M_total (flux, m s-1)
 
         self.update_ws_density_ratio()
         self.update_snow_depth()
         self.update_wi_density_ratio()
         self.update_ice_depth()
         self.update_snowpack_cold_content()
-        self._timestep += 1
 
-        # Ensure discharge is consistent at end of step
-        Q = self.M_total * self.da_m2
+        # -----------------------------------------
+        # Advance the discrete timestep counter
+        # -----------------------------------------
+        self._timestep += 1
+        # Clamp in case of any overshoot due to FP error
+        if self.get_current_time() > self.get_end_time():
+            self._timestep = int(self.get_end_time() // self.get_time_step())
+
+        # -----------------------------------------
+        # Publish discharge Q = flux * area (m3 s-1)
+        # Ensure Q is always defined and array-shaped
+        # -----------------------------------------
+        M_total = getattr(self, "M_total", np.array([0.0], dtype="float64"))
+        if not isinstance(M_total, np.ndarray):
+            M_total = np.array([M_total], dtype="float64")
+        Q = M_total * self.da_m2
         if not isinstance(Q, np.ndarray):
             Q = np.array([Q], dtype="float64")
         elif Q.ndim == 0:
@@ -527,30 +548,37 @@ class BmiTopoflowGlacier(BmiBase):
             Q = Q.astype("float64", copy=False)
         self._outputs.set_value("channel_water_x-section__volume_flow_rate", Q)
 
-
     def finalize(self) -> None:
         """Clean up any internal resources of the model"""
         pass
 
     def update_until(self, time: float) -> None:
-        """_summary_
-
-        Parameters
-        ----------
-        time : float
-            the current time
         """
-        if time <= self.get_current_time():
-            current_time = self.get_current_time()
-            logger.warning(f"no update performed: {time=} <= {current_time=}")
-            return None
+        Advance the model forward in whole dt steps, up to (but not beyond) the target time.
+        The target is clamped to the model end time. No partial (fractional) step is attempted.
+        """
+        # Normalize inputs/clock
+        current = float(self.get_current_time())
+        end_t = float(self.get_end_time())
+        dt = float(self.get_time_step())
+        target = float(time)
 
-        n_steps, remainder = divmod(time - self.get_current_time(), self.get_time_step())
+        # Clamp target to end-of-run
+        if target > end_t:
+            target = end_t
 
-        if remainder != 0:
-            logger.warning(f"time is not multiple of time step size. updating until: {time - remainder=} ")
+        # Nothing to do?
+        if target <= current + 1e-12:
+            return
 
-        for _ in range(int(n_steps)):
+        # Compute number of whole steps to perform
+        remaining = target - current
+        n_steps = int(np.floor(remaining / dt + 1e-12))
+
+        # Execute steps without overshooting
+        for _ in range(n_steps):
+            if self.get_current_time() >= (self.get_end_time() - 1e-12):
+                break
             self.update()
 
     def get_start_time(self) -> float:
@@ -563,17 +591,12 @@ class BmiTopoflowGlacier(BmiBase):
         return "s"
 
     def get_end_time(self) -> float:
-        """
-        End of the model’s valid time domain, in seconds since start.
-        We expose an exclusive end (i.e., you can advance while current_time < end_time).
-        """
         return float(self._run_end_time_s)
 
     def get_current_time(self) -> float:
         return float(self._timestep) * self._timestep_size_s
 
     def is_at_end_time(self) -> bool:
-        # Treat tiny FP error as 'at end'
         return self.get_current_time() >= (self.get_end_time() - 1e-12)
 
     def _parse_yyyymmddhh(self, s: str) -> tuple[int, int, int, int]:
@@ -2036,7 +2059,7 @@ class BmiTopoflowGlacier(BmiBase):
         """
         return str(self.get_value_ptr(name).dtype)
 
-    def get_current_datetime(self, time_units="seconds"):
+    def get_current_datetime_old(self, time_units="seconds"):
         """
         Advance start_datetime by a given offset.
 
@@ -2064,6 +2087,28 @@ class BmiTopoflowGlacier(BmiBase):
             self.start_datetime += pd.to_timedelta(time, unit="d")
         else:
             raise ValueError(f"Unsupported time_units: {time_units}")
+
+    def get_current_datetime(self, time_units="seconds"):
+        """
+        Advance start_datetime by one model time step (dt seconds) and return it.
+
+        Notes
+        -----
+        - self.dt is in seconds; we always step in seconds regardless of `time_units`
+          to avoid accidental 3600x jumps when callers pass "hour".
+        - Returns the updated pandas.Timestamp.
+        """
+        # Use the canonical step size in *seconds*
+        step_seconds = float(getattr(self, "_timestep_size_s", self.dt))
+
+        # Ensure we have a pandas.Timestamp
+        if not isinstance(self.start_datetime, pd.Timestamp):
+            self.start_datetime = pd.to_datetime(self.start_datetime)
+
+        # Always advance in seconds to avoid unit mismatches
+        self.start_datetime = self.start_datetime + pd.to_timedelta(step_seconds, unit="s")
+
+        return self.start_datetime
 
     def get_var_units(self, name: str) -> str:
         units = {
