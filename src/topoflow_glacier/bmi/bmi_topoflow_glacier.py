@@ -22,7 +22,7 @@ _dynamic_input_vars = [
     ("atmosphere_water__liquid_equivalent_precipitation_rate", "mm h-1"),
     ("land_surface_radiation~incoming~shortwave__energy_flux", "W m-2"),
     ("land_surface_air__temperature", "degC"),
-    ("wind_speed_UV", "m sec-1"),
+    # ("wind_speed_UV", "m sec-1"),
 ]
 
 _output_vars = [
@@ -34,6 +34,8 @@ _output_vars = [
     ("glacier_ice__melt_volume_flux", "m s-1"),
     ("land_surface_water__runoff_volume_flux", "m s-1"),
     ("atmosphere_bottom_air_water-vapor__relative_saturation", "-"),
+    # NEW: discharge expected by NGen (m3 s-1)
+    ("channel_water_x-section__volume_flow_rate", "m3 s-1"),
 ]
 
 # --------------   Complete Name Crosswalk   -----------------------------
@@ -55,6 +57,7 @@ INTERNAL_NAME_CROSSWALK = {
     "glacier_ice__melt_volume_flux": "IM",
     "land_surface_water__runoff_volume_flux": "M_total",
     "atmosphere_bottom_air_water-vapor__relative_saturation": "RH",
+    "channel_water_x-section__volume_flow_rate": "Q_out",
     # Unused variables:
     # "atmosphere_bottom_air__mass-per-volume_density": "rho_air",
     # "atmosphere_bottom_air__mass-specific_isobaric_heat_capacity": "Cp_air",
@@ -89,9 +92,11 @@ INTERNAL_NAME_CROSSWALK = {
 # Reverse mapping (internal name -> BMI name)
 EXTERNAL_NAME_CROSSWALK = {v: k for k, v in INTERNAL_NAME_CROSSWALK.items()}
 
+
 def crosswalk_to_external(internal_name: str):
     """Return the external (BMI) name for a given internal name."""
     return EXTERNAL_NAME_CROSSWALK[internal_name]
+
 
 def crosswalk_to_interal(external_name: str):
     """Return the internal name for a given external (BMI) name."""
@@ -118,6 +123,12 @@ class BmiTopoflowGlacier(BmiBase):
         self._outputs = build_context(_output_vars)
         self._timestep: int = 0
         configure_logging()
+                
+        # Internal wind state (components + derived magnitude)
+        self._wind_u: float = 0.0     # m s-1
+        self._wind_v: float = 0.0     # m s-1
+        self._wind_speed: float = 0.0 # m s-1 (derived)
+
 
     @property
     def P(self) -> np.ndarray:
@@ -128,8 +139,10 @@ class BmiTopoflowGlacier(BmiBase):
     def P(self, value: np.ndarray) -> None:
         # BMI advertises mm h-1, but computations expect m s-1
         # initialize() defines: self.mmph_to_mps = 1/3_600_000
-        self._dynamic_inputs.set_value("atmosphere_water__liquid_equivalent_precipitation_rate",
-                                   value * self.mmph_to_mps)
+        self._dynamic_inputs.set_value(
+            "atmosphere_water__liquid_equivalent_precipitation_rate", value * self.mmph_to_mps
+        )
+
     @property
     def T_air(self) -> np.ndarray:
         """Getter for the Air Temperature dynamic input state variable"""
@@ -139,7 +152,6 @@ class BmiTopoflowGlacier(BmiBase):
     def T_air(self, value: np.ndarray) -> None:
         """Setter for the Air Temperature dynamic input state variable"""
         self._dynamic_inputs.set_value("land_surface_air__temperature", value)
-
 
     @property
     def LW_in(self) -> np.ndarray:
@@ -183,13 +195,13 @@ class BmiTopoflowGlacier(BmiBase):
 
     @property
     def uz(self) -> np.ndarray:
-        """Getter for the XY Wind state variable"""
-        return self._dynamic_inputs.value("wind_speed_UV")
+        """Wind-speed magnitude used by physics (derived or set)."""
+        return np.array([self._wind_speed], dtype="float64")
 
     @uz.setter
     def uz(self, value: np.ndarray) -> None:
-        """Setter for the XY Wind state variable"""
-        self._dynamic_inputs.set_value("wind_speed_UV", value)
+        """Setter for wind-speed magnitude (legacy support)."""
+        self._wind_speed = float(np.asarray(value).reshape(-1)[0])
 
     @property
     def SM(self) -> np.ndarray:
@@ -270,6 +282,7 @@ class BmiTopoflowGlacier(BmiBase):
     def RH(self, value: np.ndarray) -> None:
         """Setter for the relative humidity state variable"""
         self._outputs.set_value("atmosphere_bottom_air_water-vapor__relative_saturation", value)
+
 
     def initialize(self, config_file: str | Path) -> None:
         """Initialize the BMI model with config."""
@@ -357,6 +370,9 @@ class BmiTopoflowGlacier(BmiBase):
         self._outputs.set_value(
             name="glacier__liquid_equivalent_depth", value=np.array([self.cfg.h0_iwe], dtype="float64")
         )
+        self._outputs.set_value(
+            name="channel_water_x-section__volume_flow_rate", value=np.array([0.0], dtype="float64")
+        )
 
         # Glacier Component - convert to 1D arrays
         self.vol_SM = np.array([0], dtype="float64")  # [m3]
@@ -410,15 +426,22 @@ class BmiTopoflowGlacier(BmiBase):
             solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
         )  # Topoflow enumerates the time via start_datetime
 
+        # --- internal wind state ---
+        self._wind_u = 0.0   # m s-1, x-component
+        self._wind_v = 0.0   # m s-1, y-component
+        self._wind_speed = 0.0  # m s-1, derived magnitude
+
         # --- BMI time bookkeeping ---
-        self._timestep = 0                           # integer step counter
-        self._timestep_size_s = float(self.dt)       # seconds per update()
+        self._timestep = 0  # integer step counter
+        self._timestep_size_s = float(self.dt)  # seconds per update()
 
         # Parse start/end datetimes from config (use your existing fields if present)
         # Accept either pre-parsed fields or the YYYYmmddHH strings in cfg.{start,end}_time
         if hasattr(self, "start_year"):
             self.start_datetime = pd.to_datetime(
-                solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
+                solar.get_datetime_str(
+                    self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0
+                )
             )
         else:
             self.start_datetime = pd.to_datetime(self.cfg.start_time, format="%Y%m%d%H")
@@ -430,6 +453,13 @@ class BmiTopoflowGlacier(BmiBase):
         else:
             self.end_datetime = pd.to_datetime(self.cfg.end_time, format="%Y%m%d%H")
 
+        # --- derive total steps and end-of-run time in seconds ---
+        total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
+        # If forcing times are inclusive of both start and end rows, you have N rows and N-1 hourly steps.
+        # We derive an integer number of steps that fits within [start, end] at size dt.
+        self._n_steps = int(np.floor(total_seconds / self._timestep_size_s + 1e-12))
+        # Define model end as exactly _n_steps * dt (exclusive end). Adapter may request exactly this time.
+        self._run_end_time_s = float(self._n_steps) * self._timestep_size_s
 
 
     def update(self) -> None:
@@ -487,6 +517,17 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_snowpack_cold_content()
         self._timestep += 1
 
+        # Ensure discharge is consistent at end of step
+        Q = self.M_total * self.da_m2
+        if not isinstance(Q, np.ndarray):
+            Q = np.array([Q], dtype="float64")
+        elif Q.ndim == 0:
+            Q = Q.reshape(1).astype("float64")
+        else:
+            Q = Q.astype("float64", copy=False)
+        self._outputs.set_value("channel_water_x-section__volume_flow_rate", Q)
+
+
     def finalize(self) -> None:
         """Clean up any internal resources of the model"""
         pass
@@ -513,34 +554,27 @@ class BmiTopoflowGlacier(BmiBase):
             self.update()
 
     def get_start_time(self) -> float:
-        """Returns the start time
-
-        Returns
-        -------
-        float
-            the start time
-        """
-        return 0
+        return 0.0
 
     def get_time_step(self) -> float:
-        return self._timestep_size_s
+        return float(self._timestep_size_s)
 
     def get_time_units(self) -> str:
         return "s"
 
     def get_end_time(self) -> float:
-        # seconds from start to end
-        return float((self.end_datetime - self.start_datetime).total_seconds())
+        """
+        End of the model’s valid time domain, in seconds since start.
+        We expose an exclusive end (i.e., you can advance while current_time < end_time).
+        """
+        return float(self._run_end_time_s)
 
     def get_current_time(self) -> float:
-        """Returns the current timestep
+        return float(self._timestep) * self._timestep_size_s
 
-        Returns
-        -------
-        float
-            The current time
-        """
-        return self._timestep * self._timestep_size_s
+    def is_at_end_time(self) -> bool:
+        # Treat tiny FP error as 'at end'
+        return self.get_current_time() >= (self.get_end_time() - 1e-12)
 
     def _parse_yyyymmddhh(self, s: str) -> tuple[int, int, int, int]:
         """Accepts 'YYYYMMDD-HH' (e.g., '20231001-01') or 'YYYYMMDDHH'. Returns (year, month, day, hour, dt)."""
@@ -548,6 +582,11 @@ class BmiTopoflowGlacier(BmiBase):
         fmt = "%Y%m%d-%H" if "-" in s else "%Y%m%d%H"
         dt = datetime.strptime(s, fmt)  # raises ValueError if malformed
         return dt.year, dt.month, dt.day, dt.hour
+
+    def _recompute_wind_speed(self) -> None:
+        """Update derived wind speed magnitude from components."""
+        # Use hypot for numerical stability
+        self._wind_speed = float(np.hypot(self._wind_u, self._wind_v))
 
     def update_atm_pressure_from_elevation(self, T_C=True, MBAR=False):
         """
@@ -1468,14 +1507,31 @@ class BmiTopoflowGlacier(BmiBase):
 
     def update_combined_meltrate(self):
         """We want to feed combined snow and ice melt to GIUH for
-        # runoff, so combine the IM and SM variables to create Mtotal.
-        # ---------------------------------------------------------
-        """  # noqa: D205
-        M_total = (
-            self.IM + self.SM + self.P_rain / 3600
-        )  # TODO: self.P_rain is here because there is no other module to handle P_rain at this moment
+        runoff, so combine the IM and SM variables to create M_total (flux).
+        Then convert flux [m s-1] to discharge [m3 s-1] using area.
+        """
+        # Always define M_total
+        M_total = self.IM + self.SM + (self.P_rain / 3600.0)  # [m s-1]; P_rain term for now (no routing)
 
-        self.M_total = M_total
+        # Persist flux (shape-safe)
+        if isinstance(M_total, np.ndarray):
+            self.M_total = M_total
+        else:
+            self.M_total = np.array([M_total], dtype="float64")
+
+        # --- Compute discharge Q = flux * area (ALWAYS define Q) ---
+        Q = self.M_total * self.da_m2  # [m3 s-1]
+
+        # Ensure ndarray with float64 and shape (1,) for BMI
+        if not isinstance(Q, np.ndarray):
+            Q = np.array([Q], dtype="float64")
+        elif Q.ndim == 0:
+            Q = Q.reshape(1).astype("float64")
+        else:
+            Q = Q.astype("float64", copy=False)
+
+        # Update BMI output
+        self._outputs.set_value("channel_water_x-section__volume_flow_rate", Q)
 
     def enforce_max_snow_meltrate(self):
         """The max possible meltrate would be if all snow (given
@@ -1832,16 +1888,99 @@ class BmiTopoflowGlacier(BmiBase):
 
     def set_value(self, name: str, src: np.ndarray) -> None:
         """Sets the value inside the model state"""
+
+        # --- optional wind handling (not advertised) ---
+        if name == "wind_speed_UV":
+            self._wind_speed = float(np.asarray(src).reshape(-1)[0])
+            return
+        if name == "land_surface_wind__speed":
+            self._wind_speed = float(np.asarray(src).reshape(-1)[0])
+            return
+        if name == "atmosphere_wind__x_component_of_velocity":
+            self._wind_u = float(np.asarray(src).reshape(-1)[0])
+            self._recompute_wind_speed()
+            return
+        if name == "atmosphere_wind__y_component_of_velocity":
+            self._wind_v = float(np.asarray(src).reshape(-1)[0])
+            self._recompute_wind_speed()
+            return
+
+        # --- existing behavior (inputs/outputs) ---
         return first_containing(name, self._outputs, self._dynamic_inputs).set_value(name, src)
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray) -> None:
         """Sets a value within a destination array"""
-        return first_containing(name, self._outputs, self._dynamic_inputs).set_value_at_indices(
-            name, inds, src
-        )
+        ctx = first_containing(name, self._outputs, self._dynamic_inputs)
+        arr = ctx.value(name)
+        arr_flat = np.asarray(arr).reshape(-1)
+
+        idx = np.asarray(inds, dtype=int).reshape(-1)
+        vals = np.asarray(src).reshape(-1)
+
+        if vals.size == 1 and idx.size > 1:
+            vals = np.full(idx.shape, vals.item(), dtype=arr_flat.dtype, copy=False)
+
+        if idx.size != vals.size:
+            raise ValueError(
+                f"set_value_at_indices: size mismatch for {name!r}: len(inds)={idx.size}, len(src)={vals.size}"
+            )
+
+        # Bounds check
+        if idx.size > 0:
+            max_i = idx.max()
+            min_i = idx.min()
+            if min_i < 0 or max_i >= arr_flat.size:
+                raise IndexError(
+                    f"set_value_at_indices: index out of bounds for variable {name!r}: "
+                    f"min={min_i}, max={max_i}, size={arr_flat.size}"
+                )
+
+        # Apply updates
+        arr_flat[idx] = vals
+
+        # Write back with original shape
+        ctx.set_value(name, arr_flat.reshape(np.asarray(arr).shape))
+
+
+    def get_value_at_indices(self, name: str, inds: np.ndarray, dest: NDArray) -> NDArray:
+        """
+        Copy values of variable `name` at flat indices `inds` into `dest`, and return `dest`.
+        Works for scalars (length-1) and 1-D arrays.
+        """
+        # Get source array in native form
+        arr = self.get_value_ptr(name)
+
+        # Normalize shapes/types
+        src_flat = np.asarray(arr).reshape(-1)
+        idx = np.asarray(inds, dtype=int).reshape(-1)
+        out = np.asarray(dest)
+
+        # Bounds check (helpful error instead of IndexError deep in numpy)
+        if idx.size > 0:
+            max_i = idx.max()
+            min_i = idx.min()
+            if min_i < 0 or max_i >= src_flat.size:
+                raise IndexError(
+                    f"get_value_at_indices: index out of bounds for variable {name!r}: "
+                    f"min={min_i}, max={max_i}, size={src_flat.size}"
+                )
+
+        # If src is scalar, just fill with that scalar
+        if src_flat.size == 1:
+            out[...] = src_flat[0]
+            return out
+
+        # Gather and copy
+        out[...] = src_flat[idx]
+        return out
+
 
     def get_value(self, name: str, dest: NDArray) -> NDArray:
         """_Copies_ a variable's np.np.ndarray into `dest` and returns `dest`."""
+        if name in ("wind_speed_UV", "land_surface_wind__speed"):
+            dest = np.asarray(dest)
+            dest[...] = self._wind_speed
+            return dest
         value = self.get_value_ptr(name)
         try:
             if not isinstance(value, np.ndarray):
@@ -1853,11 +1992,12 @@ class BmiTopoflowGlacier(BmiBase):
                     dest[:] = self.get_value_ptr(name)
         except Exception as e:
             raise RuntimeError(f"Could not return value {name} as flattened array") from e
-
         return dest
 
     def get_value_ptr(self, name: str) -> NDArray:
         """Gets value in native form if exists in inputs or outputs"""
+        if name in ("wind_speed_UV", "land_surface_wind__speed"):
+            return np.array([self._wind_speed], dtype="float64")
         return first_containing(name, self._outputs, self._dynamic_inputs).value(name)
 
     def get_var_itemsize(self, name: str) -> int:
@@ -1926,37 +2066,36 @@ class BmiTopoflowGlacier(BmiBase):
             raise ValueError(f"Unsupported time_units: {time_units}")
 
     def get_var_units(self, name: str) -> str:
-        """
-        Return the unit string for a given BMI variable name.
-        NOTE:
-        - Precip is advertised in mm h^-1 (the setter should convert to m s^-1 internally).
-        - Fluxes are m s^-1; energy fluxes are W m^-2; depths/thicknesses are m.
-        """
         units = {
-            # --- Inputs ---
+            # Inputs (advertised)
             "atmosphere_water__liquid_equivalent_precipitation_rate": "mm h-1",
             "land_surface_air__temperature": "degC",
             "land_surface_radiation~incoming~longwave__energy_flux": "W m-2",
             "land_surface_radiation~incoming~shortwave__energy_flux": "W m-2",
             "land_surface_air__pressure": "Pa",
-            "atmosphere_air_water~vapor__relative_saturation": "1",   # dimensionless (fraction)
-            "wind_speed_UV": "m s-1",
+            "atmosphere_air_water~vapor__relative_saturation": "1",
 
-            # --- Outputs / States ---
+            # Optional/legacy (supported but not advertised)
+            "wind_speed_UV": "m s-1",
+            "land_surface_wind__speed": "m s-1",
+            "atmosphere_wind__x_component_of_velocity": "m s-1",
+            "atmosphere_wind__y_component_of_velocity": "m s-1",
+
+            # Outputs / states
             "snowpack__melt_volume_flux": "m s-1",
             "glacier_ice__melt_volume_flux": "m s-1",
             "land_surface_water__runoff_volume_flux": "m s-1",
-
             "snowpack__depth": "m",
             "glacier_ice__thickness": "m",
             "snowpack__liquid-equivalent_depth": "m",
             "glacier__liquid_equivalent_depth": "m",
+
+            "channel_water_x-section__volume_flow_rate": "m3 s-1",
         }
         try:
             return units[name]
         except KeyError:
             raise ValueError(f"Unknown variable for units: {name!r}")
-
 
     def get_var_itemcount(self, name: str) -> int:
         """
@@ -1970,7 +2109,6 @@ class BmiTopoflowGlacier(BmiBase):
         # grid_id = self.get_var_grid(name)
         # return int(self.get_grid_size(grid_id))
 
-
     def get_input_item_count(self) -> int:
         """Aggregate item count across all input vars."""
         return int(sum(self.get_var_itemcount(v) for v in self.get_input_var_names()))
@@ -1978,7 +2116,6 @@ class BmiTopoflowGlacier(BmiBase):
     def get_output_item_count(self) -> int:
         """Aggregate item count across all output vars."""
         return int(sum(self.get_var_itemcount(v) for v in self.get_output_var_names()))
-
 
 
 def first_containing(name: str, *states: Context) -> Context:
