@@ -1188,23 +1188,18 @@ class BmiTopoflowGlacier(BmiBase):
 
         self.alpha = alpha
 
-    def set_slope_angle(self):
-        """Slope angle"""
-        # -------------------------------------------------
-        # -------------------------------------------------
+    def set_slope_angle(self) -> None:
+        """Set slope angle beta from slope magnitude; ensure within [0, pi/2]."""
         beta = np.arctan(self.slopes)
         beta = (self.twopi + beta) % self.twopi
-        # ---------------------------------------------
-        is_nan = not np.isfinite(beta)
-        if is_nan:
-            beta = np.float64(0)
-        # ------------------------------------------------------------------
-        w_bad = np.logical_or((beta < 0), (beta > np.pi / 2))
-        if w_bad:
-            logger.error(
-                "ERROR: In met_base.py, some slope angles are out of range.  Returning without setting beta."
-            )
-            return
+
+        if not np.all(np.isfinite(beta)):
+            beta = np.where(np.isfinite(beta), beta, np.float64(0))
+
+        w_bad = np.logical_or(beta < 0, beta > (np.pi / 2))
+        if np.any(w_bad):
+            logger.error("ERROR: Some slope angles are out of range. Not updating beta for those cells.")
+            beta = np.where(w_bad, np.float64(0), beta)
 
         self.beta = beta
 
@@ -2089,6 +2084,17 @@ class BmiTopoflowGlacier(BmiBase):
         else:
             raise ValueError(f"Unsupported time_units: {time_units}")
 
+    def get_current_datetime(self, time_units: str = "seconds") -> pd.Timestamp:
+        """
+        Advance start_datetime by one model time step (dt seconds) and return it.
+        """
+        step_seconds = float(getattr(self, "_timestep_size_s", self.dt))
+
+        if not isinstance(self.start_datetime, pd.Timestamp):
+            self.start_datetime = pd.to_datetime(self.start_datetime)
+
+        self.start_datetime = self.start_datetime + pd.to_timedelta(step_seconds, unit="s")
+        return self.start_datetime
 
     def get_var_units(self, name: str) -> str:
         units = {
