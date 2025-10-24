@@ -306,7 +306,9 @@ class BmiTopoflowGlacier(BmiBase):
         self.da_km2 = self.cfg.da
         self.da_m2 = self.da_km2 * 1e6
         self.slopes = self.cfg.slope
-        self.P_snow_3day_watershed = np.zeros(int(3 * self.hours_per_day / self.dt), dtype="float64")
+        #self.P_snow_3day_watershed = np.zeros(int(3 * self.hours_per_day / self.dt), dtype="float64")
+        n_steps_3days = max(1, int(np.ceil((3 * 24 * 3600) / float(self.dt))))
+        self._init_three_day_snow_buffer()
 
         self.T_surf = np.array([0], dtype="float64")  # T_surf = land_surface temperature
         self.RH = np.array([0], dtype="float64")
@@ -435,6 +437,8 @@ class BmiTopoflowGlacier(BmiBase):
         self._timestep = 0  # integer step counter
         self._timestep_size_s = float(self.dt)  # seconds per update()
 
+        self._finalize_time_bounds()
+
         # Parse start/end datetimes from config (use your existing fields if present)
         # Accept either pre-parsed fields or the YYYYmmddHH strings in cfg.{start,end}_time
         if hasattr(self, "start_year"):
@@ -460,7 +464,14 @@ class BmiTopoflowGlacier(BmiBase):
         # Exclusive end; adapter may request exactly this time.
         self._run_end_time_s = float(self._n_steps) * self._timestep_size_s
 
-
+    def _init_three_day_snow_buffer(self) -> None:
+        """
+        Initialize the rolling 3-day buffer (in *timesteps*) used by the albedo
+        routine to track recent snowfall. Works for any dt (seconds).
+        """
+        secs_3days = 3 * 24 * 3600
+        n_steps_3days = max(1, int(np.ceil(secs_3days / float(self.dt))))
+        self.P_snow_3day_watershed = np.zeros(n_steps_3days, dtype="float64")
 
     def update(self) -> None:
         """Advance the model by exactly one fixed time step (dt), without exceeding end time."""
@@ -718,24 +729,14 @@ class BmiTopoflowGlacier(BmiBase):
         volume = np.double(self.P_snow * self.da_m2 * self.dt)  # [m^3]
         self.vol_PS += np.sum(volume)
 
-    def update_bulk_richardson_number(self):
+    def update_bulk_richardson_number(self) -> None:
         """
-        (9/6/14)  Found a typo in the Zhang et al. (2000) paper,
-        in the definition of Ri.  Also see Price and Dunne (1976).
-        We should have (Ri > 0) and (T_surf > T_air) when STABLE.
-        This also removes problems/singularities in the corrections
-        for the stable and unstable cases in the next function.
-        ---------------------------------------------------------------
-        Notes: Other definitions are possible, such as the one given
-               by Dingman (2002, p. 599).  However, this one is the
-               one given by Zhang et al. (2000) and is meant for use
-               with the stability criterion also given there.
-        ---------------------------------------------------------------
-        """  # noqa: D205
+        Compute bulk Richardson number, guarding zeros in the denominator elementwise.
+        Ri > 0 (T_surf > T_air) indicates stable conditions.
+        """
         top = self.g * self.z * (self.T_air - self.T_surf)
-        bot = (self.uz) ** 2.0 * (self.T_air + np.float64(273.15))
-        if bot == 0.0:
-            bot = 0.01  # to prevent denominator becomes zero
+        bot = (self.uz ** 2.0) * (self.T_air + np.float64(273.15))
+        bot = np.where(bot == 0.0, np.float64(0.01), bot)
         self.Ri = top / bot
 
     def update_bulk_aero_conductance(self):
@@ -2088,27 +2089,6 @@ class BmiTopoflowGlacier(BmiBase):
         else:
             raise ValueError(f"Unsupported time_units: {time_units}")
 
-    def get_current_datetime(self, time_units="seconds"):
-        """
-        Advance start_datetime by one model time step (dt seconds) and return it.
-
-        Notes
-        -----
-        - self.dt is in seconds; we always step in seconds regardless of `time_units`
-          to avoid accidental 3600x jumps when callers pass "hour".
-        - Returns the updated pandas.Timestamp.
-        """
-        # Use the canonical step size in *seconds*
-        step_seconds = float(getattr(self, "_timestep_size_s", self.dt))
-
-        # Ensure we have a pandas.Timestamp
-        if not isinstance(self.start_datetime, pd.Timestamp):
-            self.start_datetime = pd.to_datetime(self.start_datetime)
-
-        # Always advance in seconds to avoid unit mismatches
-        self.start_datetime = self.start_datetime + pd.to_timedelta(step_seconds, unit="s")
-
-        return self.start_datetime
 
     def get_var_units(self, name: str) -> str:
         units = {
@@ -2161,6 +2141,22 @@ class BmiTopoflowGlacier(BmiBase):
     def get_output_item_count(self) -> int:
         """Aggregate item count across all output vars."""
         return int(sum(self.get_var_itemcount(v) for v in self.get_output_var_names()))
+
+    def _finalize_time_bounds(self) -> None:
+        """
+        Compute the number of whole dt steps in the run window and the exclusive
+        run end time in seconds, with numerical safeguards.
+        """
+        dt = float(self._timestep_size_s)
+        total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
+
+        if total_seconds < 0:
+            raise ValueError("Config end_time precedes start_time.")
+
+        self._n_steps = int(np.floor((total_seconds + 1e-12) / dt))
+        if total_seconds > 0 and self._n_steps == 0:
+            self._n_steps = 1
+        self._run_end_time_s = float(self._n_steps) * dt
 
 
 def first_containing(name: str, *states: Context) -> Context:
