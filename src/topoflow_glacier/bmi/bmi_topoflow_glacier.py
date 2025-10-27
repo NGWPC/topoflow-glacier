@@ -283,9 +283,9 @@ class BmiTopoflowGlacier(BmiBase):
         """Setter for the relative humidity state variable"""
         self._outputs.set_value("atmosphere_bottom_air_water-vapor__relative_saturation", value)
 
-
     def initialize(self, config_file: str | Path) -> None:
         """Initialize the BMI model with config."""
+        logger.info("initialize")
         # Read config
         with open(config_file) as f:
             config = yaml.safe_load(f)
@@ -296,8 +296,21 @@ class BmiTopoflowGlacier(BmiBase):
         self.sec_per_year = np.float64(3600) * 24 * 365  # [secs]
         self.mps_to_mmph = np.float64(3600000)
         self.mmph_to_mps = np.float64(1) / np.float64(3600000)
-        self.dt = self.cfg.dt
-        self.days_per_dt = self.dt / 86400
+        # --- time-step normalization: ensure dt is in *seconds* ---
+        self.dt = float(self.cfg.dt)
+        # Heuristic: many legacy configs specify dt in HOURS as a small integer (1,3,6)
+        # If dt looks like hours, convert to seconds.
+        if self.dt <= 10.0:  # treat small ints as hours (1h, 3h, 6h, etc.)
+            try:
+                logger.warning(f"dt={self.dt} looks like HOURS; converting to seconds (dt *= 3600).")
+            except Exception:
+                pass
+            self.dt *= 3600.0  # hours -> seconds
+
+        # Recompute all quantities that depend on dt
+        self.days_per_dt = self.dt / 86400.0
+        self._timestep_size_s = float(self.dt)  # seconds per update()
+
         self.n = 0.0  # For albedo calculations, Start 'number of days since major snowfall' at 0
         self.C_to_K = 273.15
         self.K_to_C = -273.15
@@ -435,9 +448,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         # --- BMI time bookkeeping ---
         self._timestep = 0  # integer step counter
-        self._timestep_size_s = float(self.dt)  # seconds per update()
-
-        self._finalize_time_bounds()
+        #self._timestep_size_s = float(self.dt)  # seconds per update()
 
         # Parse start/end datetimes from config (use your existing fields if present)
         # Accept either pre-parsed fields or the YYYYmmddHH strings in cfg.{start,end}_time
@@ -457,12 +468,30 @@ class BmiTopoflowGlacier(BmiBase):
         else:
             self.end_datetime = pd.to_datetime(self.cfg.end_time, format="%Y%m%d%H")
 
+        # >>> moved here, after start/end datetimes exist <<<
+        self._finalize_time_bounds()
+
+        # --- derive total steps and end-of-run time in seconds ---
+        # total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
+        # self._n_steps = int(np.ceil(total_seconds / self._timestep_size_s - 1e-12))
+        # Exclusive end; adapter may request exactly this time.
+        # self._run_end_time_s = float(self._n_steps) * self._timestep_size_s
 
         # --- derive total steps and end-of-run time in seconds ---
         total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
-        self._n_steps = int(np.ceil(total_seconds / self._timestep_size_s - 1e-12))
-        # Exclusive end; adapter may request exactly this time.
-        self._run_end_time_s = float(self._n_steps) * self._timestep_size_s
+        dt = float(self._timestep_size_s)
+
+        # n_full = number of *advances* to reach the last valid state (e.g., 743 for May 1 00 → May 31 23 hourly)
+        n_full = int(np.floor(total_seconds / dt + 1e-12))
+
+        # Number of *states* (including t0) is n_full + 1; last valid current_time is n_full * dt
+        self._n_steps = n_full + 1
+        self._run_end_time_s = float(n_full) * dt                      # last valid model time (no stepping beyond this)
+        self._adapter_end_time_s = float((n_full + 1)) * dt            # one extra dt so adapters never “exceed” end time
+
+        self._warn_if_no_initial_storage()
+
+        #self._skip_solar_geometry = True
 
     def _init_three_day_snow_buffer(self) -> None:
         """
@@ -527,7 +556,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.enforce_max_ice_meltrate()
         self.update_IM_integral()
         self.update_iwe()                              # relies on previous timestep's swe value
-        self.update_combined_meltrate()                # sets self.M_total (flux, m s-1)
+        self.update_combined_meltrate()                # sets self.M_total (flux, m s-1) & Q
 
         self.update_ws_density_ratio()
         self.update_snow_depth()
@@ -543,24 +572,15 @@ class BmiTopoflowGlacier(BmiBase):
         if self.get_current_time() > self.get_end_time():
             self._timestep = int(self.get_end_time() // self.get_time_step())
 
-        # -----------------------------------------
-        # Publish discharge Q = flux * area (m3 s-1)
-        # Ensure Q is always defined and array-shaped
-        # -----------------------------------------
-        M_total = getattr(self, "M_total", np.array([0.0], dtype="float64"))
-        if not isinstance(M_total, np.ndarray):
-            M_total = np.array([M_total], dtype="float64")
-        Q = M_total * self.da_m2
-        if not isinstance(Q, np.ndarray):
-            Q = np.array([Q], dtype="float64")
-        elif Q.ndim == 0:
-            Q = Q.reshape(1).astype("float64")
-        else:
-            Q = Q.astype("float64", copy=False)
-        self._outputs.set_value("channel_water_x-section__volume_flow_rate", Q)
+        logger.info(f"Qsum={float(np.asarray(self.Q_sum).reshape(-1)[0]):.3f} W/m2, "
+             f"SM={float(np.asarray(self.SM).reshape(-1)[0]):.6e} m/s, "
+             f"IM={float(np.asarray(self.IM).reshape(-1)[0]):.6e} m/s, "
+             f"P_rain={float(np.asarray(self.P_rain).reshape(-1)[0]):.6e} m/s")
+
 
     def finalize(self) -> None:
         """Clean up any internal resources of the model"""
+        logger.info("finalize")
         pass
 
     def update_until(self, time: float) -> None:
@@ -593,21 +613,29 @@ class BmiTopoflowGlacier(BmiBase):
             self.update()
 
     def get_start_time(self) -> float:
+        logger.info("get_start_time")
         return 0.0
 
     def get_time_step(self) -> float:
+        logger.info(f"get_time_step: {self._timestep_size_s}")
         return float(self._timestep_size_s)
 
     def get_time_units(self) -> str:
+        logger.info("get_time_units")
         return "s"
 
     def get_end_time(self) -> float:
+        logger.info(f"get_end_time: {self._adapter_end_time_s}")
+        # Report an end time one dt beyond the last valid model state to satisfy adapters
         return float(self._run_end_time_s)
 
     def get_current_time(self) -> float:
+        logger.info("get_current_time")
+        logger.info(float(self._timestep) * self._timestep_size_s)
         return float(self._timestep) * self._timestep_size_s
 
     def is_at_end_time(self) -> bool:
+        logger.info("is_at_end_time")
         return self.get_current_time() >= (self.get_end_time() - 1e-12)
 
     def _parse_yyyymmddhh(self, s: str) -> tuple[int, int, int, int]:
@@ -641,6 +669,7 @@ class BmiTopoflowGlacier(BmiBase):
         p0 : float
             Atmospheric pressure [Pa]
         """
+        #logger.info("update_atm_pressure_from_elevation")
         # constants
         sea_level_p0 = self.cfg.sea_level_p0  # sea-level standard pressure [Pa]
         T0 = self.cfg.sea_level_T0  # sea-level standard temperature [K]
@@ -670,6 +699,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain and da are both either scalar or grid.
         -------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_p_integeral")
         volume = np.double(self.P * self.da_m2 * self.dt)  # [m^3 in the unit of self.dt]
         self.vol_P += np.sum(volume)
 
@@ -679,6 +709,7 @@ class BmiTopoflowGlacier(BmiBase):
         Must use "fill()" to preserve reference.
         -------------------------------------------
         """  # noqa: D205
+        #logger.info("update_p_max")
         self.P_max.fill(np.maximum(self.P_max, self.P.max()))
 
     def update_P_rain(self):
@@ -688,6 +719,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain is used by channel_base.update_R.
         -------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_p_rain")
         P_rain = self.P * (self.T_air > self.T_rain_snow)
 
         if np.ndim(self.P_rain) == 0:
@@ -707,6 +739,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_snow is used by snow_base.update_depth.
         -------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_p_snow")
         self.P_snow = self.P * (self.T_air <= self.T_rain_snow)
 
     def update_P_rain_integral(self):
@@ -716,6 +749,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain and da are both either scalar or grid.
         ------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_p_rain_integeral")
         volume = np.double(self.P_rain * self.da_m2 * self.dt)  # [m^3]
         self.vol_PR += np.sum(volume)
 
@@ -726,17 +760,30 @@ class BmiTopoflowGlacier(BmiBase):
         # P_snow and da are both either scalar or grid.
         # ------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_p_snow_integeral")
         volume = np.double(self.P_snow * self.da_m2 * self.dt)  # [m^3]
         self.vol_PS += np.sum(volume)
 
-    def update_bulk_richardson_number(self) -> None:
+    def update_bulk_richardson_number(self):
         """
-        Compute bulk Richardson number, guarding zeros in the denominator elementwise.
-        Ri > 0 (T_surf > T_air) indicates stable conditions.
+        (9/6/14)  Found a typo in the Zhang et al. (2000) paper,
+        in the definition of Ri.  Also see Price and Dunne (1976).
+        We should have (Ri > 0) and (T_surf > T_air) when STABLE.
+        This also removes problems/singularities in the corrections
+        for the stable and unstable cases in the next function.
+        ---------------------------------------------------------------
+        Notes: Other definitions are possible, such as the one given
+               by Dingman (2002, p. 599).  However, this one is the
+               one given by Zhang et al. (2000) and is meant for use
+               with the stability criterion also given there.
+        ---------------------------------------------------------------
         """
+        #logger.info("update_bulk_richardson_number")
         top = self.g * self.z * (self.T_air - self.T_surf)
-        bot = (self.uz ** 2.0) * (self.T_air + np.float64(273.15))
-        bot = np.where(bot == 0.0, np.float64(0.01), bot)
+        bot = (self.uz) ** 2.0 * (self.T_air + np.float64(273.15))
+        bot = np.asarray(bot, dtype="float64")
+        # prevent division by zero
+        bot = np.where(bot == 0.0, 0.01, bot)
         self.Ri = top / bot
 
     def update_bulk_aero_conductance(self):
@@ -761,16 +808,20 @@ class BmiTopoflowGlacier(BmiBase):
           z, h_snow, z0_air, or uz is a grid.
         -----------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_bulk_aero_conductance")
         h_snow = self.h_snow  # (ref from new framework)
 
-        arg = self.cfg.kappa / np.log(np.maximum((self.z - h_snow) / self.cfg.z0_air, 0.01))
+        # Guard against non-positive argument to log
+        denom = np.maximum((self.z - h_snow) / self.cfg.z0_air, 0.01)
+        arg = self.cfg.kappa / np.log(denom)
         Dn = self.uz * (arg) ** 2.0
-        if self.T_air == self.T_surf:
-            nw = 0
-        else:
-            nw = 1
 
-        if nw == 0:
+        # Treat “neutral” if air–surface delta-T is (nearly) zero everywhere
+        # (elementwise compare with tolerance to avoid array truth ambiguities)
+        delta_T = np.asarray(self.T_air) - np.asarray(self.T_surf)
+        neutral_everywhere = np.all(np.isfinite(delta_T)) and np.all(np.abs(delta_T) < 1e-12)
+
+        if neutral_everywhere:
             # --------------------------------------------
             # All pixels are neutral. Set Dh = De = Dn.
             # --------------------------------------------
@@ -779,23 +830,24 @@ class BmiTopoflowGlacier(BmiBase):
             self.De = Dn
             return
 
-        Dh = Dn.copy()  ### (9/7/14.  Save Dn also.)
+        Dh = np.array(Dn, copy=True)  ### (9/7/14.  Save Dn also.)
+        Ri = np.asarray(self.Ri)
         nD = Dh.size
-        nR = self.Ri.size
+        nR = Ri.size
         if nR > 1:
             # --------------------------
             # Case where RI is a grid
             # --------------------------
-            ws = self.Ri > 0  # where stable
-            ns = ws.sum()
-            wu = np.invert(ws)  # where unstable
-            nu = wu.sum()
+            ws = Ri > 0  # where stable
+            ns = int(np.sum(ws))
+            wu = np.logical_not(ws)  # where unstable
+            nu = int(np.sum(wu))
 
             if nD == 1:
                 # -----------------------------------
                 # Convert Dh to a grid, same as Ri
                 # -----------------------------------
-                Dh = Dh + np.zeros(self.Ri.shape, dtype="float64")
+                Dh = Dh + np.zeros(Ri.shape, dtype="float64")
 
             # ----------------------------------------------------------
             # If (Ri > 0), or (T_surf > T_air), then STABLE. (9/6/14)
@@ -807,19 +859,20 @@ class BmiTopoflowGlacier(BmiBase):
             # Dh[wu] = Dh[wu] * (np.float64(1) - (np.float64(10) * self.Ri[wu]))
             # -----------------------------------------------------------------------
             if ns != 0:
-                Dh[ws] = Dh[ws] / (np.float64(1) + (np.float64(10) * self.Ri[ws]))
+                Dh[ws] = Dh[ws] / (np.float64(1) + (np.float64(10) * Ri[ws]))
             if nu != 0:
-                Dh[wu] = Dh[wu] * (np.float64(1) - (np.float64(10) * self.Ri[wu]))
+                Dh[wu] = Dh[wu] * (np.float64(1) - (np.float64(10) * Ri[wu]))
         else:
             # ----------------------------
             # Case where Ri is a scalar
             # --------------------------------
             # Works if Dh is grid or scalar
             # --------------------------------
-            if self.Ri > 0:
-                Dh = Dh / (np.float64(1) + (np.float64(10) * self.Ri))
+            Ri_scalar = float(Ri) if Ri.size == 1 else float(self.Ri)
+            if Ri_scalar > 0:
+                Dh = Dh / (np.float64(1) + (np.float64(10) * Ri_scalar))
             else:
-                Dh = Dh * (np.float64(1) - (np.float64(10) * self.Ri))
+                Dh = Dh * (np.float64(1) - (np.float64(10) * Ri_scalar))
 
         # ----------------------------------------------------
         # NB! We currently assume that these are all equal.
@@ -837,6 +890,7 @@ class BmiTopoflowGlacier(BmiBase):
         Compute sensible heat flux
         -----------------------------
         """  # noqa: D205
+        #logger.info("update_sensible_heat_flux")
         delta_T = self.T_air - self.T_surf
         self.Qh = (self.cfg.rho_air * self.cfg.Cp_air) * self.Dh * delta_T
 
@@ -866,6 +920,7 @@ class BmiTopoflowGlacier(BmiBase):
         #       correctly, then there is no need to recompute e_sat.
         # ----------------------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_saturation_vapor_pressure")
         if SURFACE:
             #             HAVE_VAR   = hasattr(self, 'e_sat_surf'))
             #             T_CONSTANT = (self.T_surf_type in ['Scalar', 'Grid'])
@@ -910,6 +965,7 @@ class BmiTopoflowGlacier(BmiBase):
         :param MBAR: converts to mbar
         :return: None
         """
+        #logger.info("update_vapor_pressure_from_spHum_AirPre")
         e = self.Hum_sp * self.P_air / (self.cfg.eps + ((1 - self.cfg.eps) * self.Hum_sp))
         e = e / np.float64(1000)  # [kPa]
 
@@ -928,6 +984,7 @@ class BmiTopoflowGlacier(BmiBase):
         :param SURFACE: False or True
         :return: None
         """
+        #logger.info("update_RH")
         if SURFACE:
             self.RH = self.e_surf / self.e_sat_surf
         else:
@@ -940,6 +997,7 @@ class BmiTopoflowGlacier(BmiBase):
         #        e has units of kPa.
         # ---------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_vapor_pressure")
         if SURFACE:
             e_sat = self.e_sat_surf
         else:
@@ -981,6 +1039,7 @@ class BmiTopoflowGlacier(BmiBase):
         # See: https://en.wikipedia.org/wiki/Dew_point
         # -----------------------------------------------
         """  # noqa: D205
+        #logger.info("update_dew_point")
         a = 6.1121  # [mbar]
         b = 18.678
         c = 257.14  # [deg C]
@@ -999,6 +1058,7 @@ class BmiTopoflowGlacier(BmiBase):
         # If snow and/or ice are present,  T_surf cannot
         # exceed 0 deg C
         # -------------------------------------------------
+        #logger.info("update_T_surf")
         T_surf = np.where(
             ((self.h_snow > 0) | (self.h_ice > 0)),  # where snow or ice exists
             np.minimum(self.T_dew, np.float64(0)),  # T_surf is either T_dew or 0, whichever is lower
@@ -1012,6 +1072,7 @@ class BmiTopoflowGlacier(BmiBase):
         #         which depends on air temp and relative humidity.
         # ------------------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_precipitable_water_content")
         arg = np.float64(0.0614 * self.T_dew)
         self.W_p = np.float64(1.12) * np.exp(arg)  # [cm]
 
@@ -1024,6 +1085,7 @@ class BmiTopoflowGlacier(BmiBase):
         # be 0.622 instead of 0.662 (Zhang et al., 2000).
         # --------------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_latent_heat_flux")
         const = self.cfg.latent_heat_constant
         factor = self.cfg.rho_air * self.cfg.Lv * self.De
         delta_e = self.e_air - self.e_surf
@@ -1041,6 +1103,7 @@ class BmiTopoflowGlacier(BmiBase):
         #        All the Q's have units of W/m^2 = J/(m^2 s).
         # -----------------------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_conduction_heat_flux")
         pass  # Method not implemented in Topoflow: https://github.com/NOAA-OWP/topoflow/blob/db4d5877a32455beebe78edf5abe8d91df128665/topoflow/components/met_base.py#L1905
 
     def update_advection_heat_flux(self):
@@ -1048,15 +1111,21 @@ class BmiTopoflowGlacier(BmiBase):
         #        All the Q's have units of W/m^2 = J/(m^2 s).
         # ------------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_advection_heat_flux")
         pass  # Method not implemented in Topoflow: https://github.com/NOAA-OWP/topoflow/blob/db4d5877a32455beebe78edf5abe8d91df128665/topoflow/components/met_base.py#L1925
 
     def update_julian_day(self, time_units="seconds"):
-        """Update the julian_day and year using pandas datetime."""
+        """Update the julian_day and year using pandas datetime.
+
+        Cheap path (default): only advance time and compute decimal Julian day.
+        Full solar geometry (True Solar Noon etc.) is computed only if
+        self._skip_solar_geometry is False (i.e., when we *must* synthesize SW).
+        """
+        logger.info("update_julian_day")
         # -------------------------------------------------------
         # Compute the current datetime from start + offset
         # -------------------------------------------------------
         self.get_current_datetime(time_units=time_units)
-
         self.year = self.start_datetime.year
 
         # ----------------------------------
@@ -1069,34 +1138,31 @@ class BmiTopoflowGlacier(BmiBase):
             + self.start_datetime.minute / 1440
             + self.start_datetime.second / 86400
         )
-        # print('Julian Day =', self.julian_day)
 
-        # ----------------------------------
-        # Update the *decimal* Julian day
-        # --------------------------------------------------
-        # Before 2021-07-29, but doesn't stay in [1,365].
-        # --------------------------------------------------
-        ## self.julian_day += (self.dt / self.secs_per_day) # [days]
+        # -------------------------------------------------------
+        # Cheap path: no expensive solar geometry if we have SW forcing
+        # -------------------------------------------------------
+        if getattr(self, "_skip_solar_geometry", True):
+            # When not synthesizing shortwave, just set offsets to 0
+            self.GMT_offset = np.float64(0.0)
+            self.TSN_offset = np.float64(0.0)
+            return
 
-        # ------------------------------------------
-        # Compute the offset from True Solar Noon
-        # clock_hour is in 24-hour military time
-        # but it can have a decimal part.
-        # ------------------------------------------
+        # -----------------------------
+        # Full geometry (rarely needed)
+        # -----------------------------
         dec_part = self.julian_day - int(self.julian_day)
         clock_hour = dec_part * self.hours_per_day
-        ## print '    Computing solar_noon...'
         self.GMT_offset = solar.gmt_offset_hours(
             lat=self.cfg.lat, lon=self.cfg.lon, when_utc=self.start_datetime
         )
         solar_noon = solar.True_Solar_Noon(
             self.julian_day,
-            self.cfg.lon,  # for USA region, lon is negative
-            self.GMT_offset,  #  time-zone offset from GMT/UTC in hours
-            DST_offset=None,  #####
+            self.cfg.lon,            # for USA region, lon is negative
+            self.GMT_offset,         # time-zone offset from GMT/UTC in hours
+            DST_offset=None,
             year=self.year,
         )
-        ## print '    Computing TSN_offset...'
         self.TSN_offset = clock_hour - solar_noon  # [hours]
 
     def update_albedo(self, method="aging"):
@@ -1113,16 +1179,23 @@ class BmiTopoflowGlacier(BmiBase):
         0 deg C, 0.12 for temperatures > 0 deg C
         ------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_albedo")
         if method == "aging":
             albedo = self.albedo
+
+            # Ensure 3-day buffer exists and matches dt-derived length
+            secs_3days = 3 * 24 * 3600
+            n_steps_3days = max(1, int(np.ceil(secs_3days / float(self.dt))))
+            buf = getattr(self, "P_snow_3day_watershed", None)
+            if buf is None or np.size(buf, axis=0) != n_steps_3days:
+                self.P_snow_3day_watershed = np.zeros(n_steps_3days, dtype="float64")
 
             r = np.where((self.T_air > 0), 0.12, 0.05)
             K = 0.44
             alpha0 = 0.4
 
-            self.P_snow_3day_watershed = np.roll(
-                self.P_snow_3day_watershed, -1, axis=0
-            )  # you can roll on different axes (time axis), shape of the DEM and time axis and roll on the time axis
+            # you can roll on different axes (time axis), shape of the DEM and time axis and roll on the time axis
+            self.P_snow_3day_watershed = np.roll(self.P_snow_3day_watershed, -1, axis=0)
             ws_density_ratio = self.rho_H2O / self.rho_snow
             self.P_snow_3day_watershed[np.size(self.P_snow_3day_watershed, axis=0) - 1] = (
                 self.P_snow * self.dt * ws_density_ratio
@@ -1209,7 +1282,59 @@ class BmiTopoflowGlacier(BmiBase):
         # ---------------------------------------------------------
         # Compute Qn_SW for this time
         # --------------------------------
+        """
+        #logger.info("update_net_shortwave_radiation")
+        # Fast path: if SW_in (forcing) is available, use it directly.
+        # Units are W m-2 and net shortwave = Kin * (1 - albedo) (Dingman 2015, Eq. 6B1.1)
+        try:
+            SW_in = np.asarray(self.SW_in, dtype="float64")
+        except Exception:
+            SW_in = None
+
+        if SW_in is not None and np.all(np.isfinite(SW_in)):
+            # stay in cheap mode (no solar geometry)
+            self._skip_solar_geometry = True
+            Qn_SW = SW_in * (1.0 - self.albedo)
+            if np.ndim(self.Qn_SW) == 0:
+                self.Qn_SW.fill(np.float64(Qn_SW))
+            else:
+                self.Qn_SW[:] = Qn_SW  # [W m-2]
+            return
+
+        # -----------------------------------------------------------
+        # Fall back to analytic clear-sky model only if no forcing.
+        # -----------------------------------------------------------
+        # enable full solar geometry from now on
+        self._skip_solar_geometry = False
+
+        K_cs = solar.Clear_Sky_Radiation(
+            self.cfg.lat,
+            self.julian_day,
+            self.W_p,
+            self.TSN_offset,
+            self.alpha,
+            self.beta,
+            self.albedo,
+            self.cfg.dust_atten,
+        )
+
+        # net shortwave = Kin * (1 - albedo)
+        Qn_SW = K_cs * (1 - self.albedo)
+
+        if np.ndim(self.Qn_SW) == 0:
+            self.Qn_SW.fill(Qn_SW)  #### (mutable scalar)
+        else:
+            self.Qn_SW[:] = Qn_SW  # [W m-2]
+
+
+    def update_net_shortwave_radiation_old(self):
+        """Notes:  If time is before local sunrise or after local
+        #         sunset then Qn_SW should be zero.
+        # ---------------------------------------------------------
+        # Compute Qn_SW for this time
+        # --------------------------------
         """  # noqa: D205
+
         K_cs = solar.Clear_Sky_Radiation(
             self.cfg.lat,
             self.julian_day,
@@ -1255,6 +1380,7 @@ class BmiTopoflowGlacier(BmiBase):
              But it reduces to other formulas as it should.
         ---------------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_em_air")
         T_air_K = self.T_air + self.C_to_K
 
         if not (self.cfg.SATTERLUND):
@@ -1296,6 +1422,53 @@ class BmiTopoflowGlacier(BmiBase):
         #             self.em_air[:] = em_air
 
     def update_net_longwave_radiation(self):
+        """Notes: Net longwave radiation is computed using the
+               Stefan-Boltzman law.  All four data types
+               should be allowed (scalar, time series, grid or
+               grid stack).
+
+               Qn_LW = (LW_in - LW_out)
+               LW_in   = em_air  * sigma * (T_air  + 273.15)^4
+               LW_out  = em_surf * sigma * (T_surf + 273.15)^4
+
+               Temperatures in [deg_C] must be converted to
+               [K].  Recall that absolute zero occurs at
+               0 [deg_K] or -273.15 [deg_C].
+
+        ----------------------------------------------------------------
+        First, e_air is computed as:
+          e_air = RH * 0.611 * exp[(17.3 * T_air) / (T_air + 237.3)]
+        Then, em_air is computed as:
+          em_air = (1 - F) * 1.72 * [e_air / (T_air + 273.15)]^(1/7) *
+                    (1 + 0.22 * C^2) + F
+        ----------------------------------------------------------------
+        Compute Qn_LW for this time
+        --------------------------------
+        """
+        #logger.info("update_net_longwave_radiation")
+        T_surf_K = self.T_surf + self.C_to_K
+        T_air_K  = self.T_air  + self.C_to_K
+
+        # Fast path: if LWDOWN is provided in forcing, use it for LW_in.
+        try:
+            LW_in_forced = np.asarray(self.LW_in, dtype="float64")
+        except Exception:
+            LW_in_forced = None
+
+        if LW_in_forced is not None and np.all(np.isfinite(LW_in_forced)):
+            LW_in = LW_in_forced
+        else:
+            # Compute LW_in from emissivity when forcing is not available.
+            LW_in = self.em_air * self.cfg.sigma * (T_air_K) ** 4.0
+
+        LW_out = self.cfg.em_surf * self.cfg.sigma * (T_surf_K) ** 4.0
+
+        # Account for reflection of atmospheric longwave by the surface
+        LW_out += (1.0 - self.cfg.em_surf) * LW_in
+
+        self.Qn_LW = LW_in - LW_out  # [W m-2]
+
+    def update_net_longwave_radiation_old(self):
         """Notes: Net longwave radiation is computed using the
                Stefan-Boltzman law.  All four data types
                should be allowed (scalar, time series, grid or
@@ -1402,6 +1575,7 @@ class BmiTopoflowGlacier(BmiBase):
                dt       = snowmelt timestep [seconds]
         ----------------------------------------------------------------
         """  # noqa: D205
+        #logger.info("update_net_energy_flux")
         Q_sum = self.Qn_SW + self.Qn_LW + self.Qh + self.Qe + self.Qa + self.Qc  # [W m-2]
 
         if np.ndim(self.Q_sum) == 0:
@@ -1452,6 +1626,7 @@ class BmiTopoflowGlacier(BmiBase):
         # E_rem = energy remaining in excess of Eccs
         # -----------------------------------------------
         """  # noqa: D205
+        #logger.info("update_snow_meltrate")
         E_in = self.Q_sum * self.dt
         E_rem = np.maximum(E_in - self.Eccs, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
@@ -1506,6 +1681,7 @@ class BmiTopoflowGlacier(BmiBase):
         # E_rem = energy remaining in excess of Ecci
         # -----------------------------------------------
         """  # noqa: D205
+        #logger.info("update_ice_meltrate")
         E_in = self.Q_sum * self.dt
         E_rem = np.maximum(E_in - self.Ecci, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
@@ -1530,7 +1706,9 @@ class BmiTopoflowGlacier(BmiBase):
         Then convert flux [m s-1] to discharge [m3 s-1] using area.
         """
         # Always define M_total
-        M_total = self.IM + self.SM + (self.P_rain / 3600.0)  # [m s-1]; P_rain term for now (no routing)
+        # NOTE: self.P (and hence self.P_rain) are in m s-1 already (converted in the setter).
+        # Do NOT divide by 3600 here.
+        M_total = self.IM + self.SM + self.P_rain  # [m s-1]
 
         # Persist flux (shape-safe)
         if isinstance(M_total, np.ndarray):
@@ -1924,8 +2102,30 @@ class BmiTopoflowGlacier(BmiBase):
             self._recompute_wind_speed()
             return
 
+        # --- unit fix for precipitation coming from CSV forcing ---
+        if name == "atmosphere_water__liquid_equivalent_precipitation_rate":
+            # CSV provider supplies mm h-1 → convert to m s-1
+            vals = np.asarray(src, dtype="float64")
+            vals_mps = vals * (1.0 / 3_600_000.0)
+            self._dynamic_inputs.set_value(name, vals_mps)
+            return
+
         # --- existing behavior (inputs/outputs) ---
         return first_containing(name, self._outputs, self._dynamic_inputs).set_value(name, src)
+
+    def _warn_if_no_initial_storage(self) -> None:
+        try:
+            h_swe0 = float(np.asarray(self._outputs.value("snowpack__liquid-equivalent_depth")).reshape(-1)[0])
+            h_snow0 = float(np.asarray(self._outputs.value("snowpack__depth")).reshape(-1)[0])
+            h_iwe0 = float(np.asarray(self._outputs.value("glacier__liquid_equivalent_depth")).reshape(-1)[0])
+            h_ice0 = float(np.asarray(self._outputs.value("glacier_ice__thickness")).reshape(-1)[0])
+        except Exception:
+            return
+        if (h_swe0 <= 0.0) and (h_snow0 <= 0.0) and (h_iwe0 <= 0.0) and (h_ice0 <= 0.0):
+            logger.warning(
+                "Initial SWE/ice are all zero (h0_swe=h0_snow=h0_iwe=h0_ice=0). "
+                "Without rainfall in forcing, discharge will remain 0."
+            )
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray) -> None:
         """Sets a value within a destination array"""
@@ -2055,6 +2255,7 @@ class BmiTopoflowGlacier(BmiBase):
         """
         return str(self.get_value_ptr(name).dtype)
 
+
     def get_current_datetime_old(self, time_units="seconds"):
         """
         Advance start_datetime by a given offset.
@@ -2084,16 +2285,26 @@ class BmiTopoflowGlacier(BmiBase):
         else:
             raise ValueError(f"Unsupported time_units: {time_units}")
 
-    def get_current_datetime(self, time_units: str = "seconds") -> pd.Timestamp:
+    def get_current_datetime(self, time_units: str = "seconds"):
         """
         Advance start_datetime by one model time step (dt seconds) and return it.
+
+        Notes
+        -----
+        - self.dt is in seconds; we always step in seconds regardless of `time_units`
+          to avoid accidental 3600x jumps when callers pass "hour".
+        - Returns the updated pandas.Timestamp.
         """
+        # Use the canonical step size in *seconds*
         step_seconds = float(getattr(self, "_timestep_size_s", self.dt))
 
+        # Ensure we have a pandas.Timestamp
         if not isinstance(self.start_datetime, pd.Timestamp):
             self.start_datetime = pd.to_datetime(self.start_datetime)
 
+        # Always advance in seconds to avoid unit mismatches
         self.start_datetime = self.start_datetime + pd.to_timedelta(step_seconds, unit="s")
+
         return self.start_datetime
 
     def get_var_units(self, name: str) -> str:
@@ -2150,20 +2361,25 @@ class BmiTopoflowGlacier(BmiBase):
 
     def _finalize_time_bounds(self) -> None:
         """
-        Compute the number of whole dt steps in the run window and the exclusive
-        run end time in seconds, with numerical safeguards.
+        Derive numeric end-of-run bounds for the BMI clock based on configured
+        start/end datetimes and the fixed time step (seconds). This prepares:
+          - self._n_steps        : integer number of update() steps
+          - self._run_end_time_s : exclusive end time in seconds
         """
-        dt = float(self._timestep_size_s)
+        # Parse start/end datetimes from the parsed YYYYMMDDHH fields
+        self.start_datetime = pd.to_datetime(
+            solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
+        )
+        self.end_datetime = pd.to_datetime(
+            solar.get_datetime_str(self.end_year, self.end_month, self.end_day, self.end_hour, 0, 0)
+        )
+
+        # Compute exclusive end time as an integer number of dt steps
         total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
-
-        if total_seconds < 0:
-            raise ValueError("Config end_time precedes start_time.")
-
-        self._n_steps = int(np.floor((total_seconds + 1e-12) / dt))
-        if total_seconds > 0 and self._n_steps == 0:
-            self._n_steps = 1
-        self._run_end_time_s = float(self._n_steps) * dt
-
+        self._timestep_size_s = float(self.dt)
+        # The adapter may request exactly the exclusive end; keep a tiny slack
+        self._n_steps = int(np.ceil(total_seconds / self._timestep_size_s - 1e-12))
+        self._run_end_time_s = float(self._n_steps) * self._timestep_size_s
 
 def first_containing(name: str, *states: Context) -> Context:
     """Return the first `State` object containing `name` in `states`. Otherwise, raise `KeyError`."""
