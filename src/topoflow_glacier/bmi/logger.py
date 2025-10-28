@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 logger = logging.getLogger()
 _configured = False
 
-MODULE_NAME = "Topoflow-Glacier"
+MODULE_NAME = "TFGLACR"
 LOG_DIR_NGENCERF = "/ngencerf/data"  # ngenCERF log directory string if environement var empty.
 LOG_DIR_DEFAULT = "run-logs"  # Default parent log directory string if env var empty  & ngencerf dosn't exist
 LOG_FILE_EXT = "log"  # Log file name extension
@@ -21,8 +21,8 @@ LOG_MODULE_NAME_LEN = 8  # Width of module name for log entries
 
 EV_EWTS_LOGGING = "NGEN_EWTS_LOGGING"  # Enable/disable of Error Warning and Trapping System
 EV_NGEN_LOGFILEPATH = "NGEN_LOG_FILE_PATH"  # ngen log file
-EV_MODULE_LOGLEVEL = "TOPOFLOW_GLACIER_LOGLEVEL"  # This modules log level
-EV_MODULE_LOGFILEPATH = "TOPOFLOW_GLACIER_LOGFILEPATH"  # This modules log full log filename
+EV_MODULE_LOGLEVEL = "TFGLACR_LOGLEVEL"  # This modules log level
+EV_MODULE_LOGFILEPATH = "TFGLACR_LOGFILEPATH"  # This modules log full log filename
 
 
 class CustomFormatter(logging.Formatter):

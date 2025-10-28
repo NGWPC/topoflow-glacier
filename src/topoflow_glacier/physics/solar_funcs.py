@@ -119,7 +119,9 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 from timezonefinder import TimezoneFinder
+from topoflow_glacier.bmi.logger import configure_logging, logger
 
+configure_logging()
 tf = TimezoneFinder()
 
 
@@ -394,15 +396,15 @@ def ET_Radiation_Flux(lat_deg, Julian_day, th):
 
     TEST = False
     if TEST:
-        print("Julian day =", Julian_day)
-        print("min(lat_deg), max(lat_deg) =", lat_deg.min(), lat_deg.max())
-        print("I_sc =", I_sc)
-        print("min(omega), max(omega) =", omega.min(), omega.max())
-        print("min(Gamma), max(Gamma) =", Gamma.min(), Gamma.max())
-        print("min(delta), max(delta) =", delta.min(), delta.max())
-        print("min(E0), max(E0)       =", E0.min(), E0.max())
-        print("min(K_ET), max(K_ET)   =", K_ET.min(), K_ET.max())
-        print()
+        logger.info("Julian day =", Julian_day)
+        logger.info("min(lat_deg), max(lat_deg) =", lat_deg.min(), lat_deg.max())
+        logger.info("I_sc =", I_sc)
+        logger.info("min(omega), max(omega) =", omega.min(), omega.max())
+        logger.info("min(Gamma), max(Gamma) =", Gamma.min(), Gamma.max())
+        logger.info("min(delta), max(delta) =", delta.min(), delta.max())
+        logger.info("min(E0), max(E0)       =", E0.min(), E0.max())
+        logger.info("min(K_ET), max(K_ET)   =", K_ET.min(), K_ET.max())
+        logger.info()
 
     # -------------------------------------------------------------
     # NB! During local nightime hours, K_ET < 0.
@@ -416,12 +418,12 @@ def ET_Radiation_Flux(lat_deg, Julian_day, th):
 #     K_ET_min = K_ET.min()
 #     K_ET_max = K_ET.max()
 #     if (K_ET_min < 0):
-#         print('------------------------------------------')
-#         print('ERROR in ET_Radiation_Flux():')
-#         print('Incoming radiation flux should be > 0.')
-#         print('min, max =', K_ET_min, K_ET_max)
-#         print('------------------------------------------')
-#         print()
+#         logger.info('------------------------------------------')
+#         logger.info('ERROR in ET_Radiation_Flux():')
+#         logger.info('Incoming radiation flux should be > 0.')
+#         logger.info('min, max =', K_ET_min, K_ET_max)
+#         logger.info('------------------------------------------')
+#         logger.info()
 #     return K_ET    # [Watts / m^2]
 
 
@@ -913,14 +915,14 @@ def Clear_Sky_Radiation(lat_deg, Julian_day, W_p, TSN_offset, alpha, beta, albed
     # ----------------
     TEST = False
     if TEST:
-        print("min(alpha), max(alpha) =", alpha.min(), alpha.max())
-        print("min(beta),  max(beta)  =", beta.min(), beta.max())
-        print("min(tau),   max(tau)   =", tau.min(), tau.max())
-        print("min(K_ET),  max(K_ET)  =", K_ET.min(), K_ET.max())
-        print("min(K_dif), max(K_dif) =", K_dif.min(), K_dif.max())
-        print("min(K_bs),  max(K_bs)  =", K_bs.min(), K_bs.max())
-        print("min(K_cs),  max(K_cs)  =", K_cs.min(), K_cs.max())
-        print()
+        logger.info("min(alpha), max(alpha) =", alpha.min(), alpha.max())
+        logger.info("min(beta),  max(beta)  =", beta.min(), beta.max())
+        logger.info("min(tau),   max(tau)   =", tau.min(), tau.max())
+        logger.info("min(K_ET),  max(K_ET)  =", K_ET.min(), K_ET.max())
+        logger.info("min(K_dif), max(K_dif) =", K_dif.min(), K_dif.max())
+        logger.info("min(K_bs),  max(K_bs)  =", K_bs.min(), K_bs.max())
+        logger.info("min(K_cs),  max(K_cs)  =", K_cs.min(), K_cs.max())
+        logger.info()
 
     # -----------------------------------------------
     # Set K_cs to zero between (local) dusk & dawn
@@ -1156,9 +1158,9 @@ def Earth_Perihelion(year=None):
         year = Current_Year()
 
     if (year < 1981) or (year > 2060):
-        print("WARNING: Earth_Perihelion is not available")
-        print("         for the year:", year)
-        print("         Will use current year instead.")
+        logger.info("WARNING: Earth_Perihelion is not available")
+        logger.info("         for the year:", year)
+        logger.info("         Will use current year instead.")
         year = Current_Year()
 
     # --------------------------------------------
@@ -1522,7 +1524,7 @@ def Latitude_Grid(info):
             ]
         )
         for line in msg:
-            print(line)
+            logger.info(line)
         ## GUI_Error_Message(msg)
 
     # -----------------------------------------
@@ -1574,7 +1576,7 @@ def Longitude_Grid(info):
             ]
         )
         for line in msg:
-            print(line)
+            logger.info(line)
         ## GUI_Error_Message(msg)
 
     # -----------------------------------------

@@ -464,7 +464,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     def update(self) -> None:
         """Advance the model by exactly one fixed time step (dt), without exceeding end time."""
-        logger.info("update")
+        # logger.info("update")
 
         # Do not step beyond declared end time (treat tiny FP slack as 'at end')
         if self.get_current_time() >= (self.get_end_time() - 1e-12):
@@ -520,7 +520,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         # debug line for one-cell runs
         try:
-            logger.info(
+            logger.debug(
                 "Qsum=%.3f W/m2, SM=%.6e m/s, IM=%.6e m/s, P_rain=%.6e m/s",
                 float(np.asarray(self.Q_sum).reshape(-1)[0]),
                 float(np.asarray(self.SM).reshape(-1)[0]),
@@ -530,7 +530,7 @@ class BmiTopoflowGlacier(BmiBase):
         except Exception:
             pass
 
-        logger.info(f"Qsum={float(np.asarray(self.Q_sum).reshape(-1)[0]):.3f} W/m2, "
+        logger.debug(f"Qsum={float(np.asarray(self.Q_sum).reshape(-1)[0]):.3f} W/m2, "
              f"SM={float(np.asarray(self.SM).reshape(-1)[0]):.6e} m/s, "
              f"IM={float(np.asarray(self.IM).reshape(-1)[0]):.6e} m/s, "
              f"P_rain={float(np.asarray(self.P_rain).reshape(-1)[0]):.6e} m/s")
@@ -542,7 +542,7 @@ class BmiTopoflowGlacier(BmiBase):
         pass
 
     def update_until(self, until: float) -> None:
-        logger.info("update_until")
+        # logger.info("update_until")
         dt = self.get_time_step()
         end = self.get_end_time()
         target = min(float(until), float(end))
@@ -555,43 +555,43 @@ class BmiTopoflowGlacier(BmiBase):
             self.update()
             
     def get_start_time(self) -> float:
-        logger.info("get_start_time")
+        # logger.info("get_start_time")
         return 0.0
 
     def get_time_step(self) -> float:
-        logger.info(f"get_time_step: {self._timestep_size_s}")
+        # logger.info(f"get_time_step: {self._timestep_size_s}")
         #return float(self._timestep_size_s)
         dt = float(getattr(self, "_timestep_size_s", getattr(self, "dt", 0.0)))
         if dt <= 0.0:
             # Fallback so adapter never sees 0
             dt = 3600.0
-        logger.info("get_time_step: %s", dt)
+        logger.debug("get_time_step: %s", dt)
         return dt
 
     def get_time_units(self) -> str:
-        logger.info("get_time_units")
+        # logger.debug("get_time_units")
         return "s"
 
     def get_end_time(self) -> float:
-        logger.info("get_end_time")
+        # logger.info("get_end_time")
         end_s = getattr(self, "_adapter_end_time_s", None)
         if end_s is None:
             end_s = getattr(self, "_run_end_time_s", None)
         if end_s is None:
             nsteps = int(getattr(self, "_n_steps", 0))
             end_s = nsteps * self.get_time_step()
-        logger.info(f"get_end_time: {end_s}")
+        logger.debug(f"get_end_time: {end_s}")
         return float(end_s)
 
     def get_current_time(self) -> float:
-        logger.info("get_current_time")
+        # logger.info("get_current_time")
         step = int(getattr(self, "_timestep", 0))
         t = step * self.get_time_step()
-        logger.info(f"{t}")
+        logger.debug(f"{t}")
         return float(t)
 
     def is_at_end_time(self) -> bool:
-        logger.info("is_at_end_time")
+        # logger.info("is_at_end_time")
         return self.get_current_time() >= (self.get_end_time() - 1e-12)
 
     def _parse_yyyymmddhh(self, s: str) -> tuple[int, int, int, int]:
@@ -1082,7 +1082,7 @@ class BmiTopoflowGlacier(BmiBase):
         Full solar geometry (True Solar Noon etc.) is computed only if
         self._skip_solar_geometry is False (i.e., when we *must* synthesize SW).
         """
-        logger.info("update_julian_day")
+        # logger.info("update_julian_day")
         # -------------------------------------------------------
         # Compute the current datetime from start + offset
         # -------------------------------------------------------
@@ -2056,13 +2056,13 @@ class BmiTopoflowGlacier(BmiBase):
 
     def get_input_var_names(self) -> list[str]:
         """Return BMI input variable names that NGen can set."""
-        logger.info("get_input_var_names")
+        # logger.info("get_input_var_names")
         # The Context you build from _dynamic_input_vars already has the names.
         return list(self._dynamic_inputs.names())
 
     def get_output_var_names(self) -> list[str]:
         """Return BMI output variable names that NGen can read."""
-        logger.info("get_output_var_names")
+        # logger.info("get_output_var_names")
         return list(self._outputs.names())
 
     def get_value(self, name: str, dest) -> None:
@@ -2113,7 +2113,7 @@ class BmiTopoflowGlacier(BmiBase):
             )
 
     def get_value_at_indices(self, name: str, dest: np.ndarray, inds: np.ndarray) -> np.ndarray:
-        logger.info(f"get_value_at_indices: {name}")
+        logger.debug(f"get_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
         if hasattr(self, "_outputs") and name in self._outputs:
             return self._outputs.value_at_indices(name, dest, a_inds)
@@ -2122,7 +2122,7 @@ class BmiTopoflowGlacier(BmiBase):
         raise KeyError(f"Variable not found: {name}")
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray) -> None:
-        logger.info(f"set_value_at_indices: {name}")
+        logger.debug(f"set_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
         a_src = np.asarray(src)
         if hasattr(self, "_inputs") and name in self._inputs:

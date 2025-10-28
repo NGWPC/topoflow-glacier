@@ -4,7 +4,15 @@ from collections.abc import Iterable, Iterator
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
+from topoflow_glacier.bmi.logger import configure_logging, logger
 
+def _ensure(condition: bool, message: str) -> None:
+    """
+    Assert-like guard that logs a FATAL message before raising AssertionError.
+    """
+    if not condition:
+        logger.fatal(message)  # FATAL log before asserting
+        raise AssertionError(message)
 
 class Var(BaseModel):
     """Context variable representation."""
@@ -21,6 +29,7 @@ class Context:
     def __init__(self, vars: Iterable[Var]):
         """Initialization Function"""
         self._name_mapping: dict[str, Var] = {var.name: var for var in vars}
+        configure_logging()
 
     def unit(self, name: str) -> str:
         """Given a variable name, return its unit"""
@@ -32,7 +41,8 @@ class Context:
 
     def value_at_indices(self, name: str, dest: np.ndarray, indices: np.ndarray) -> np.ndarray:
         """Copies the specific pointer values into a destination array"""
-        assert dest.shape[0] >= indices.shape[0], "dest smaller than indices"
+        # assert dest.shape[0] >= indices.shape[0], "dest smaller than indices"
+        _ensure(dest.shape[0] >= indices.shape[0], "dest smaller than indices")
         src = self.value(name)
         for i in range(indices.shape[0]):
             value_index = indices[i]
@@ -45,7 +55,8 @@ class Context:
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray):
         """Sets the specific pointer values into a destination array"""
-        assert src.shape[0] >= inds.shape[0], "inds larger than src"
+        # assert src.shape[0] >= inds.shape[0], "inds larger than src"
+        _ensure(src.shape[0] >= inds.shape[0], "inds larger than src")
         arr = self.value(name)
         for i in range(inds.shape[0]):
             arr[inds[i]] = src[i]
