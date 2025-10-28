@@ -506,8 +506,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.P_snow_3day_watershed = np.zeros(n_steps_3days, dtype="float64")
 
     def update(self) -> None:
-        """Advance the model by exactly one fixed time step (dt), without exceeding end time."""
-        # Do not step beyond declared end time (treat tiny FP slack as 'at end')
+        logger.info("update")
         if self.get_current_time() >= (self.get_end_time() - 1e-12):
             return
 
@@ -515,65 +514,49 @@ class BmiTopoflowGlacier(BmiBase):
         # Meteorology / Energy part
         # -------------------------
         self.update_atm_pressure_from_elevation(T_C=True, MBAR=True)
-        self.update_P_integral()                      # update vol_P (leq)
-        self.update_P_max()
-        self.update_P_rain()
-        self.update_P_snow()
-        self.update_P_rain_integral()                 # update vol_PR
-        self.update_P_snow_integral()                 # update vol_PS (leq)
-        self.update_saturation_vapor_pressure(MBAR=True)           # for air
-        self.update_vapor_pressure_from_spHum_AirPre(MBAR=True)
+        self.update_p_integeral()
+        self.update_p_max()
+        self.update_p_rain()
+        self.update_p_snow()
+        self.update_p_rain_integeral()
+        self.update_p_snow_integeral()
+        self.update_saturation_vapor_pressure()
+        self.update_vapor_pressure_from_spHum_AirPre()
         self.update_RH()
-        # self.update_vapor_pressure()
         self.update_dew_point()
         self.update_T_surf()
-        self.update_saturation_vapor_pressure(MBAR=True, SURFACE=True)  # for surface
+        self.update_saturation_vapor_pressure()
         self.update_bulk_richardson_number()
         self.update_bulk_aero_conductance()
         self.update_sensible_heat_flux()
         self.update_precipitable_water_content()
-        self.update_vapor_pressure(SURFACE=True)
-        self.update_latent_heat_flux()                # (uses e_air and e_surf)
-        self.update_conduction_heat_flux()            # currently assumed zero
-        self.update_advection_heat_flux()             # currently assumed zero
-        self.update_julian_day(time_units="seconds")
-        self.update_albedo(method="aging")
-        self.set_aspect_angle()
-        self.set_slope_angle()
+        self.update_vapor_pressure()
+        self.update_latent_heat_flux()
+        self.update_conduction_heat_flux()
+        self.update_advection_heat_flux()
+        self.update_julian_day()
+        self.update_albedo()
         self.update_net_shortwave_radiation()
         self.update_em_air()
         self.update_net_longwave_radiation()
-        self.update_net_energy_flux()                 # (at the end)
+        self.update_net_energy_flux()
 
         # -------------------------
-        # Snow & Glacier components
+        # Snow & Ice melt
         # -------------------------
-        self.extract_previous_swe()
-        self.extract_previous_snow_depth()
-        self.update_snow_meltrate()                   # (meltrate = SM)
-        self.enforce_max_snow_meltrate()              # (before SM integral!)
-        self.update_SM_integral()
-        self.update_swe()
-        self.update_snowfall_cold_content()
+        self.update_snow_meltrate()
         self.update_ice_meltrate()
-        self.enforce_max_ice_meltrate()
-        self.update_IM_integral()
-        self.update_iwe()                              # relies on previous timestep's swe value
-        self.update_combined_meltrate()                # sets self.M_total (flux, m s-1) & Q
 
-        self.update_ws_density_ratio()
-        self.update_snow_depth()
-        self.update_wi_density_ratio()
-        self.update_ice_depth()
-        self.update_snowpack_cold_content()
+        if hasattr(self, "enforce_max_snow_meltrate"):
+            self.enforce_max_snow_meltrate()
+        if hasattr(self, "enforce_max_ice_meltrate"):
+            self.enforce_max_ice_meltrate()
 
-        # -----------------------------------------
-        # Advance the discrete timestep counter
-        # -----------------------------------------
-        self._timestep += 1
-        # Clamp in case of any overshoot due to FP error
-        if self.get_current_time() > self.get_end_time():
-            self._timestep = int(self.get_end_time() // self.get_time_step())
+        if hasattr(self, "update_combined_meltrate"):
+            self.update_combined_meltrate()
+
+        self._timestep = int(getattr(self, "_timestep", 0)) + 1
+        logger.info(f"advanced to step={self._timestep} t={self.get_current_time():0.1f}s")
 
         logger.info(f"Qsum={float(np.asarray(self.Q_sum).reshape(-1)[0]):.3f} W/m2, "
              f"SM={float(np.asarray(self.SM).reshape(-1)[0]):.6e} m/s, "
@@ -586,65 +569,54 @@ class BmiTopoflowGlacier(BmiBase):
         logger.info("finalize")
         pass
 
-    def update_until(self, time: float) -> None:
-        """
-        Advance the model forward in whole dt steps, up to (but not beyond) the target time.
-        The target is clamped to the model end time. No partial (fractional) step is attempted.
-        """
-        # Normalize inputs/clock
-        current = float(self.get_current_time())
-        end_t = float(self.get_end_time())
-        dt = float(self.get_time_step())
-        target = float(time)
-
-        # Clamp target to end-of-run
-        if target > end_t:
-            target = end_t
-
-        # Nothing to do?
-        if target <= current + 1e-12:
+    def update_until(self, until: float) -> None:
+        logger.info("update_until")
+        dt = self.get_time_step()
+        end = self.get_end_time()
+        target = min(float(until), float(end))
+        t = self.get_current_time()
+        if t >= target:
             return
-
-        # Compute number of whole steps to perform
-        remaining = target - current
-        n_steps = int(np.floor(remaining / dt + 1e-12))
-
-        # Execute steps without overshooting
+        remaining = max(0.0, target - t)
+        n_steps = int(np.floor((remaining + 1e-12) / dt))
         for _ in range(n_steps):
-            if self.get_current_time() >= (self.get_end_time() - 1e-12):
-                break
             self.update()
-
+            
     def get_start_time(self) -> float:
         logger.info("get_start_time")
         return 0.0
 
     def get_time_step(self) -> float:
         logger.info(f"get_time_step: {self._timestep_size_s}")
-        return float(self._timestep_size_s)
+        #return float(self._timestep_size_s)
+        dt = float(getattr(self, "_timestep_size_s", getattr(self, "dt", 0.0)))
+        if dt <= 0.0:
+            # Fallback so adapter never sees 0
+            dt = 3600.0
+        logger.info("get_time_step: %s", dt)
+        return dt
 
     def get_time_units(self) -> str:
         logger.info("get_time_units")
         return "s"
 
     def get_end_time(self) -> float:
-        """Return the adapter-visible end time in seconds since start.
-        This may be equal to the true run end time, but can be shortened by the adapter
-        to avoid stepping past configured bounds. Safe if called before initialize() completes.
-        """
-        try:
-            end_s = getattr(self, "_adapter_end_time_s", None)
-            if end_s is None:
-                end_s = getattr(self, "_run_end_time_s", 0.0)
-            logger.info("get_end_time: %s", end_s)
-            return float(end_s)
-        except Exception:
-            return float(getattr(self, "_run_end_time_s", 0.0))
+        logger.info("get_end_time")
+        end_s = getattr(self, "_adapter_end_time_s", None)
+        if end_s is None:
+            end_s = getattr(self, "_run_end_time_s", None)
+        if end_s is None:
+            nsteps = int(getattr(self, "_n_steps", 0))
+            end_s = nsteps * self.get_time_step()
+        logger.info(f"get_end_time: {end_s}")
+        return float(end_s)
 
     def get_current_time(self) -> float:
         logger.info("get_current_time")
-        logger.info(float(self._timestep) * self._timestep_size_s)
-        return float(self._timestep) * self._timestep_size_s
+        step = int(getattr(self, "_timestep", 0))
+        t = step * self.get_time_step()
+        logger.info(f"{t}")
+        return float(t)
 
     def is_at_end_time(self) -> bool:
         logger.info("is_at_end_time")
@@ -1760,7 +1732,14 @@ class BmiTopoflowGlacier(BmiBase):
         # Is already done by "Energy-Balance" component.
         # ------------------------------------------------------
         """  # noqa: D205
-        self.SM = np.maximum(self.SM, np.float64(0))
+        # self.SM = np.maximum(self.SM, np.float64(0))
+        max_SM = np.asarray(self.h_swe, dtype="float64") / float(self.dt)
+        SM = np.asarray(self.SM, dtype="float64")
+        SM = np.clip(SM, 0.0, max_SM)  # no negative, no over-melt
+        if np.ndim(self.SM) == 0:
+            self.SM.fill(float(SM))
+        else:
+            self.SM[:] = SM
 
     def enforce_max_ice_meltrate(self):
         """The max possible meltrate would be if all ice (given
@@ -1768,14 +1747,22 @@ class BmiTopoflowGlacier(BmiBase):
         # step, dt.  Meltrate should never exceed this value.
         # -------------------------------------------------------
         """  # noqa: D205
-        IM_max = self.h_iwe / self.dt
-        self.IM = np.minimum(self.IM, IM_max, out=self.IM)  # [m s-1]
+        # IM_max = self.h_iwe / self.dt
+        # self.IM = np.minimum(self.IM, IM_max, out=self.IM)  # [m s-1]
 
         # ------------------------------------------------------
         # Make sure meltrate is positive, while we're at it ?
         # Is already done by "Energy-Balance" component.
         # ------------------------------------------------------
-        np.maximum(self.IM, np.float64(0), out=self.IM)
+        # np.maximum(self.IM, np.float64(0), out=self.IM)
+
+        max_IM = np.asarray(self.h_iwe, dtype="float64") / float(self.dt)
+        IM = np.asarray(self.IM, dtype="float64")
+        IM = np.clip(IM, 0.0, max_IM)
+        if np.ndim(self.IM) == 0:
+            self.IM.fill(float(IM))
+        else:
+            self.IM[:] = IM
 
     def update_SM_integral(self):
         """Update mass total for SM, sum over all pixels
@@ -2087,43 +2074,33 @@ class BmiTopoflowGlacier(BmiBase):
         """Returns the number of output state variables"""
         return len(self._outputs)
 
-    def get_input_var_names(self) -> tuple[str, ...]:  # type: ignore
-        """Returns the input state variable names"""
-        return tuple(self._dynamic_inputs.names())
+    def get_input_var_names(self) -> list[str]:
+        logger.info("get_input_var_names")
+        names: list[str] = []
+        if hasattr(self, "_inputs") and self._inputs is not None:
+            names = list(self._inputs.names())
+        logger.info(f"inputs: {names}")
+        return names
 
-    def get_output_var_names(self) -> tuple[str, ...]:  # type: ignore
-        """Returns the output state variable names"""
-        return tuple(self._outputs.names())
+    def get_output_var_names(self) -> list[str]:
+        logger.info("get_output_var_names")
+        names: list[str] = []
+        if hasattr(self, "_outputs") and self._outputs is not None:
+            names = list(self._outputs.names())
+        logger.info(f"outputs: {names}")
+        return names
 
-    def set_value(self, name: str, src: np.ndarray) -> None:
-        """Sets the value inside the model state"""
+    def set_value(self, name: str, values: np.ndarray) -> None:
+        logger.info(f"set_value: {name}")
+        arr = np.asarray(values)
+        if hasattr(self, "_inputs") and name in self._inputs:
+            self._inputs.set_value(name, arr)
+            return
+        if hasattr(self, "_outputs") and name in self._outputs:
+            self._outputs.set_value(name, arr)
+            return
+        raise KeyError(f"Variable not found: {name}")
 
-        # --- optional wind handling (not advertised) ---
-        if name == "wind_speed_UV":
-            self._wind_speed = float(np.asarray(src).reshape(-1)[0])
-            return
-        if name == "land_surface_wind__speed":
-            self._wind_speed = float(np.asarray(src).reshape(-1)[0])
-            return
-        if name == "atmosphere_wind__x_component_of_velocity":
-            self._wind_u = float(np.asarray(src).reshape(-1)[0])
-            self._recompute_wind_speed()
-            return
-        if name == "atmosphere_wind__y_component_of_velocity":
-            self._wind_v = float(np.asarray(src).reshape(-1)[0])
-            self._recompute_wind_speed()
-            return
-
-        # --- unit fix for precipitation coming from CSV forcing ---
-        if name == "atmosphere_water__liquid_equivalent_precipitation_rate":
-            # CSV provider supplies mm h-1 → convert to m s-1
-            vals = np.asarray(src, dtype="float64")
-            vals_mps = vals * (1.0 / 3_600_000.0)
-            self._dynamic_inputs.set_value(name, vals_mps)
-            return
-
-        # --- existing behavior (inputs/outputs) ---
-        return first_containing(name, self._outputs, self._dynamic_inputs).set_value(name, src)
 
     def _warn_if_no_initial_storage(self) -> None:
         try:
@@ -2139,90 +2116,36 @@ class BmiTopoflowGlacier(BmiBase):
                 "Without rainfall in forcing, discharge will remain 0."
             )
 
+    def get_value_at_indices(self, name: str, dest: np.ndarray, inds: np.ndarray) -> np.ndarray:
+        logger.info(f"get_value_at_indices: {name}")
+        a_inds = np.asarray(inds, dtype=int)
+        if hasattr(self, "_outputs") and name in self._outputs:
+            return self._outputs.value_at_indices(name, dest, a_inds)
+        if hasattr(self, "_inputs") and name in self._inputs:
+            return self._inputs.value_at_indices(name, dest, a_inds)
+        raise KeyError(f"Variable not found: {name}")
+
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray) -> None:
-        """Sets a value within a destination array"""
-        ctx = first_containing(name, self._outputs, self._dynamic_inputs)
-        arr = ctx.value(name)
-        arr_flat = np.asarray(arr).reshape(-1)
+        logger.info(f"set_value_at_indices: {name}")
+        a_inds = np.asarray(inds, dtype=int)
+        a_src = np.asarray(src)
+        if hasattr(self, "_inputs") and name in self._inputs:
+            self._inputs.set_value_at_indices(name, a_inds, a_src)
+            return
+        if hasattr(self, "_outputs") and name in self._outputs:
+            self._outputs.set_value_at_indices(name, a_inds, a_src)
+            return
+        raise KeyError(f"Variable not found: {name}")
 
-        idx = np.asarray(inds, dtype=int).reshape(-1)
-        vals = np.asarray(src).reshape(-1)
-
-        if vals.size == 1 and idx.size > 1:
-            vals = np.full(idx.shape, vals.item(), dtype=arr_flat.dtype, copy=False)
-
-        if idx.size != vals.size:
-            raise ValueError(
-                f"set_value_at_indices: size mismatch for {name!r}: len(inds)={idx.size}, len(src)={vals.size}"
-            )
-
-        # Bounds check
-        if idx.size > 0:
-            max_i = idx.max()
-            min_i = idx.min()
-            if min_i < 0 or max_i >= arr_flat.size:
-                raise IndexError(
-                    f"set_value_at_indices: index out of bounds for variable {name!r}: "
-                    f"min={min_i}, max={max_i}, size={arr_flat.size}"
-                )
-
-        # Apply updates
-        arr_flat[idx] = vals
-
-        # Write back with original shape
-        ctx.set_value(name, arr_flat.reshape(np.asarray(arr).shape))
-
-
-    def get_value_at_indices(self, name: str, inds: np.ndarray, dest: NDArray) -> NDArray:
-        """
-        Copy values of variable `name` at flat indices `inds` into `dest`, and return `dest`.
-        Works for scalars (length-1) and 1-D arrays.
-        """
-        # Get source array in native form
-        arr = self.get_value_ptr(name)
-
-        # Normalize shapes/types
-        src_flat = np.asarray(arr).reshape(-1)
-        idx = np.asarray(inds, dtype=int).reshape(-1)
-        out = np.asarray(dest)
-
-        # Bounds check (helpful error instead of IndexError deep in numpy)
-        if idx.size > 0:
-            max_i = idx.max()
-            min_i = idx.min()
-            if min_i < 0 or max_i >= src_flat.size:
-                raise IndexError(
-                    f"get_value_at_indices: index out of bounds for variable {name!r}: "
-                    f"min={min_i}, max={max_i}, size={src_flat.size}"
-                )
-
-        # If src is scalar, just fill with that scalar
-        if src_flat.size == 1:
-            out[...] = src_flat[0]
-            return out
-
-        # Gather and copy
-        out[...] = src_flat[idx]
-        return out
-
-
-    def get_value(self, name: str, dest: NDArray) -> NDArray:
-        """_Copies_ a variable's np.np.ndarray into `dest` and returns `dest`."""
-        if name in ("wind_speed_UV", "land_surface_wind__speed"):
-            dest = np.asarray(dest)
-            dest[...] = self._wind_speed
-            return dest
-        value = self.get_value_ptr(name)
-        try:
-            if not isinstance(value, np.ndarray):
-                dest[:] = np.array(value).flatten()
-            else:
-                try:
-                    dest[:] = self.get_value_ptr(name).flatten()
-                except TypeError:
-                    dest[:] = self.get_value_ptr(name)
-        except Exception as e:
-            raise RuntimeError(f"Could not return value {name} as flattened array") from e
+    def get_value(self, name: str, dest: np.ndarray) -> np.ndarray:
+        logger.info(f"get_value: {name}")
+        if hasattr(self, "_outputs") and name in self._outputs:
+            src = self._outputs.value(name)
+        elif hasattr(self, "_inputs") and name in self._inputs:
+            src = self._inputs.value(name)
+        else:
+            raise KeyError(f"Variable not found: {name}")
+        dest[...] = np.asarray(src, dtype=dest.dtype)
         return dest
 
     def get_value_ptr(self, name: str) -> NDArray:
