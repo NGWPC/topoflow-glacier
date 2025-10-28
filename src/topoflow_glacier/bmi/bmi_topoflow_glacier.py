@@ -12,6 +12,7 @@ from topoflow_glacier.bmi.config import TopoflowGlacierConfig
 from topoflow_glacier.bmi.logger import configure_logging, logger
 from topoflow_glacier.physics import solar_funcs as solar
 from topoflow_glacier.physics.context import Context, build_context
+from topoflow_glacier.log_level_set import log_level_set
 
 __all__ = ["BmiTopoflowGlacier"]
 
@@ -286,6 +287,8 @@ class BmiTopoflowGlacier(BmiBase):
     def initialize(self, config_file: str | Path) -> None:
         """Initialize the BMI model with config."""
         logger.info("initialize")
+        input_parameters = {}
+        log_level_set(input_parameters)
         # Read config
         with open(config_file) as f:
             config = yaml.safe_load(f)
@@ -625,9 +628,18 @@ class BmiTopoflowGlacier(BmiBase):
         return "s"
 
     def get_end_time(self) -> float:
-        logger.info(f"get_end_time: {self._adapter_end_time_s}")
-        # Report an end time one dt beyond the last valid model state to satisfy adapters
-        return float(self._run_end_time_s)
+        """Return the adapter-visible end time in seconds since start.
+        This may be equal to the true run end time, but can be shortened by the adapter
+        to avoid stepping past configured bounds. Safe if called before initialize() completes.
+        """
+        try:
+            end_s = getattr(self, "_adapter_end_time_s", None)
+            if end_s is None:
+                end_s = getattr(self, "_run_end_time_s", 0.0)
+            logger.info("get_end_time: %s", end_s)
+            return float(end_s)
+        except Exception:
+            return float(getattr(self, "_run_end_time_s", 0.0))
 
     def get_current_time(self) -> float:
         logger.info("get_current_time")
