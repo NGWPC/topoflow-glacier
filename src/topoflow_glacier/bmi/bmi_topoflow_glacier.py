@@ -285,216 +285,172 @@ class BmiTopoflowGlacier(BmiBase):
         self._outputs.set_value("atmosphere_bottom_air_water-vapor__relative_saturation", value)
 
     def initialize(self, config_file: str | Path) -> None:
-        """Initialize the BMI model with config."""
+        """Initialize the BMI model and pre-compute all bookkeeping needed by the adapter."""
         logger.info("initialize")
-        input_parameters = {}
-        log_level_set(input_parameters)
-        # Read config
+
+        # --- logging knobs (no-ops if absent) ---
+        try:
+            input_parameters = {}
+            log_level_set(input_parameters)
+        except Exception:
+            pass
+
+        # --- load config (YAML -> TopoflowGlacierConfig) ---
         with open(config_file) as f:
-            config = yaml.safe_load(f)
+            cfg_dict = yaml.safe_load(f)
+        self.cfg = TopoflowGlacierConfig.model_validate(cfg_dict)
 
-        self.cfg = TopoflowGlacierConfig.model_validate(config)
+        # --- constants & unit helpers ---
         self.hours_per_day = np.float64(24)
-        self.seconds_per_Day = np.float64(24) * 3600
-        self.sec_per_year = np.float64(3600) * 24 * 365  # [secs]
-        self.mps_to_mmph = np.float64(3600000)
-        self.mmph_to_mps = np.float64(1) / np.float64(3600000)
-        # --- time-step normalization: ensure dt is in *seconds* ---
-        self.dt = float(self.cfg.dt)
-        # Heuristic: many legacy configs specify dt in HOURS as a small integer (1,3,6)
-        # If dt looks like hours, convert to seconds.
-        if self.dt <= 10.0:  # treat small ints as hours (1h, 3h, 6h, etc.)
-            try:
-                logger.warning(f"dt={self.dt} looks like HOURS; converting to seconds (dt *= 3600).")
-            except Exception:
-                pass
-            self.dt *= 3600.0  # hours -> seconds
-
-        # Recompute all quantities that depend on dt
-        self.days_per_dt = self.dt / 86400.0
-        self._timestep_size_s = float(self.dt)  # seconds per update()
-
-        self.n = 0.0  # For albedo calculations, Start 'number of days since major snowfall' at 0
+        self.seconds_per_Day = np.float64(86400)
+        self.sec_per_year = np.float64(31536000)
+        self.mps_to_mmph = np.float64(3600000)          # m s-1 -> mm h-1
+        self.mmph_to_mps = np.float64(1.0) / 3600000.0  # mm h-1 -> m s-1
         self.C_to_K = 273.15
         self.K_to_C = -273.15
         self.twopi = np.float64(2) * np.pi
         self.one_seventh = np.float64(1) / 7
-        self.da_km2 = self.cfg.da
-        self.da_m2 = self.da_km2 * 1e6
-        self.slopes = self.cfg.slope
-        #self.P_snow_3day_watershed = np.zeros(int(3 * self.hours_per_day / self.dt), dtype="float64")
-        n_steps_3days = max(1, int(np.ceil((3 * 24 * 3600) / float(self.dt))))
-        self._init_three_day_snow_buffer()
 
-        self.T_surf = np.array([0], dtype="float64")  # T_surf = land_surface temperature
-        self.RH = np.array([0], dtype="float64")
-        self.p0 = np.array([0], dtype="float64")  # atm pressure mbar
-        self.z = np.array([10.0], dtype="float64")  # the height the wind is read
-        self.cloud_factor = np.array([0], dtype="float64")
-        self.canopy_factor = np.array([0], dtype="float64")
-        self.P_rain = np.array([0], dtype="float64")
-        self.P_snow = np.array([0], dtype="float64")
-        self.e_air = np.array([0], dtype="float64")
-        self.e_surf = np.array([0], dtype="float64")
-        self.em_air = np.array([0], dtype="float64")
-        self.Qn_SW = np.array([0], dtype="float64")
-        self.Qn_LW = np.array([0], dtype="float64")
-        self.Q_sum = np.array([0], dtype="float64")
-        self.Qc = np.array([0], dtype="float64")
-        self.Qa = np.array([0], dtype="float64")
-        self.P_max = np.array([0], dtype="float64")
-        self.vol_P = np.array([0], dtype="float64")
-        self.vol_PR = np.array([0], dtype="float64")
-        self.vol_PS = np.array([0], dtype="float64")
-        self.Qn_SW = np.array([0], dtype="float64")
-        self.Qn_LW = np.array([0], dtype="float64")
-        self.Qn_tot = np.array([0], dtype="float64")
-        self.Q_sum = np.array([0], dtype="float64")
-        self.Qe = np.array([0], dtype="float64")
-        self.e_air = np.array([0], dtype="float64")
-        self.e_surf = np.array([0], dtype="float64")
-        self.em_air = np.array([0], dtype="float64")
-        self.Qc = np.array([0], dtype="float64")
-        self.Qa = np.array([0], dtype="float64")
+        # --- spatial constants ---
+        self.da_km2 = np.float64(self.cfg.da)
+        self.da_m2 = self.da_km2 * 1.0e6
+        self.slopes = np.array([self.cfg.slope], dtype="float64") if np.isscalar(self.cfg.slope) else np.asarray(self.cfg.slope, dtype="float64")
 
-        # Ice component - constants can stay as scalars
-        self.rho_H2O = np.float64(self.cfg.rho_H2O)  # [kg/m**3]
-        self.rho_ice = np.float64(self.cfg.rho_ice)  # [kg/m**3]
-        self.Cp_ice = np.float64(self.cfg.Cp_ice)  # [J/(kg * K)]
-        self.Qg = np.float64(self.cfg.geothermal_heat_flux)  # [(J/yr)/m**2]
-        self.grad_Tz = np.float64(self.cfg.geothermal_gradient)  # [deg_C/m]
-        self.g = np.float64(self.cfg.g)  # [m/s**2]
+        # --- timestep normalization: ensure dt is seconds ---
+        self.dt = float(self.cfg.dt)
+        if self.dt <= 10.0:
+            # Heuristic: legacy inputs often give hours as a small integer (1, 3, 6, …)
+            logger.warning(f"dt={self.dt} looks like HOURS; converting to seconds (dt *= 3600).")
+            self.dt *= 3600.0
+        self.days_per_dt = self.dt / 86400.0
+        self._timestep_size_s = float(self.dt)
 
-        # Glacier Component - constants can stay as scalars
-        self.rho_snow = np.float64(self.cfg.rho_snow)  # [kg/m**3]
-        self.Cp_snow = np.float64(self.cfg.Cp_snow)  # [J kg-1 K-1]
-        self.Lf = np.float64(self.cfg.Lf)  # [J kg-1]
+        # --- dynamic input & output contexts already exist from __init__ ---
+        # Initialize meteorology / energy stores (mutable scalars/arrays used in update())
+        self.T_surf = np.array([0.0], dtype="float64")
+        self.RH = np.array([0.0], dtype="float64")
+        self.p0 = np.array([0.0], dtype="float64")             # kPa (will convert to mbar as needed)
+        self.z = np.array([10.0], dtype="float64")             # wind reference height [m]
+        self.cloud_factor = np.array([0.0], dtype="float64")
+        self.canopy_factor = np.array([0.0], dtype="float64")
+        self.P_rain = np.array([0.0], dtype="float64")
+        self.P_snow = np.array([0.0], dtype="float64")
+        self.e_air = np.array([1e-6], dtype="float64")         # tiny positive to avoid log(0) at first step
+        self.e_surf = np.array([1e-6], dtype="float64")
+        self.em_air = np.array([0.0], dtype="float64")
+        self.Qn_SW = np.array([0.0], dtype="float64")
+        self.Qn_LW = np.array([0.0], dtype="float64")
+        self.Q_sum = np.array([0.0], dtype="float64")
+        self.Qc = np.array([0.0], dtype="float64")
+        self.Qa = np.array([0.0], dtype="float64")
+        self.Qe = np.array([0.0], dtype="float64")
+        self.P_max = np.array([0.0], dtype="float64")
+        self.vol_P  = np.array([0.0], dtype="float64")
+        self.vol_PR = np.array([0.0], dtype="float64")
+        self.vol_PS = np.array([0.0], dtype="float64")
+        self.Qn_tot = np.array([0.0], dtype="float64")
+
+        # --- ice/snow constants from config ---
+        self.rho_H2O = np.float64(self.cfg.rho_H2O)
+        self.rho_ice = np.float64(self.cfg.rho_ice)
+        self.Cp_ice  = np.float64(self.cfg.Cp_ice)
+        self.g       = np.float64(self.cfg.g)
+        self.Qg      = np.float64(self.cfg.geothermal_heat_flux)
+        self.grad_Tz = np.float64(self.cfg.geothermal_gradient)
+
+        self.rho_snow = np.float64(self.cfg.rho_snow)
+        self.Cp_snow  = np.float64(self.cfg.Cp_snow)
+        self.Lf       = np.float64(self.cfg.Lf)
         self.T_rain_snow = np.float64(self.cfg.T_rain_snow)
 
-        # State variables - convert to 1D arrays
-        self.T0 = np.array([self.cfg.T0], dtype="float64")  # [deg C]
-        self.h_active_layer = np.array([self.cfg.h_active_layer], dtype="float64")  # [m]
-        self.mr_ice = np.array([0], dtype="float64")
-        self.vol_MR = np.array([0], dtype="float64")
-        self.meltrate = np.array([0], dtype="float64")
+        # --- state variables ---
+        self.T0 = np.array([self.cfg.T0], dtype="float64")
+        self.h_active_layer = np.array([self.cfg.h_active_layer], dtype="float64")
+        self.mr_ice = np.array([0.0], dtype="float64")
+        self.vol_MR = np.array([0.0], dtype="float64")
+        self.meltrate = np.array([0.0], dtype="float64")
 
-        self._outputs.set_value(name="snowpack__depth", value=np.array([self.cfg.h0_snow], dtype="float64"))
-        self._outputs.set_value(
-            name="glacier_ice__thickness", value=np.array([self.cfg.h0_ice], dtype="float64")
-        )
-        self._outputs.set_value(
-            name="snowpack__liquid-equivalent_depth", value=np.array([self.cfg.h0_swe], dtype="float64")
-        )
-        self._outputs.set_value(
-            name="glacier__liquid_equivalent_depth", value=np.array([self.cfg.h0_iwe], dtype="float64")
-        )
-        self._outputs.set_value(
-            name="channel_water_x-section__volume_flow_rate", value=np.array([0.0], dtype="float64")
-        )
+        # outputs that must start from cfg
+        self._outputs.set_value("snowpack__depth", np.array([self.cfg.h0_snow], dtype="float64"))
+        self._outputs.set_value("glacier_ice__thickness", np.array([self.cfg.h0_ice], dtype="float64"))
+        self._outputs.set_value("snowpack__liquid-equivalent_depth", np.array([self.cfg.h0_swe], dtype="float64"))
+        self._outputs.set_value("glacier__liquid_equivalent_depth", np.array([self.cfg.h0_iwe], dtype="float64"))
+        self._outputs.set_value("channel_water_x-section__volume_flow_rate", np.array([0.0], dtype="float64"))
 
-        # Glacier Component - convert to 1D arrays
-        self.vol_SM = np.array([0], dtype="float64")  # [m3]
-        self.vol_IM = np.array([0], dtype="float64")
-        self.vol_M_total = np.array([0], dtype="float64")
-        self.vol_swe = np.array([0], dtype="float64")  # [m3]
-        self.vol_swe_start = np.array([0], dtype="float64")
-        self.vol_iwe = np.array([0], dtype="float64")
-        self.vol_iwe_start = np.array([0], dtype="float64")
+        # melt-volume accumulators
+        self.vol_SM = np.array([0.0], dtype="float64")
+        self.vol_IM = np.array([0.0], dtype="float64")
+        self.vol_M_total = np.array([0.0], dtype="float64")
+        self.vol_swe = np.array([0.0], dtype="float64")
+        self.vol_swe_start = np.array([0.0], dtype="float64")
+        self.vol_iwe = np.array([0.0], dtype="float64")
+        self.vol_iwe_start = np.array([0.0], dtype="float64")
+
+        # albedo & snowfall buffer
         self.albedo = np.array([0.3], dtype="float64")
+        self._init_three_day_snow_buffer()
+        self.n = np.array([0.0], dtype="float64")  # days since major snowfall
 
-        # Update Snowpack Water Volume
-        volume = np.float64(self.h_swe * self.cfg.da)  # [m^3]
-        vol_swe = np.sum(volume)
-        self.vol_swe.fill(vol_swe)
-        self.vol_IM = np.array([0], dtype="float64")  # (m3)
-
-        # Update Ice Water Equivalent
-        volume = np.float64(self.h_iwe * self.cfg.da)  # [m^3]
-        vol_iwe = np.sum(volume)
-        self.vol_iwe.fill(vol_iwe)
-
-        self.vol_M_total = np.array([0], dtype="float64")
-
-        # Density ratios - can stay as scalars since they're derived constants
+        # density ratios
         self.ws_density_ratio = self.rho_H2O / self.rho_snow
         self.wi_density_ratio = self.rho_H2O / self.rho_ice
 
-        # Cold content calculations
-        self.T0_cc = self.T0  # synonyms - both are now 1D arrays
+        # cold content
+        self.T0_cc = self.T0
         T_snow = self.T_surf
         del_T = self.T0_cc - T_snow
         self.Eccs = (self.rho_snow * self.Cp_snow) * self.h_snow * del_T
         self.Eccs = np.maximum(self.Eccs, np.array([0.0]))
-        self.Ecci = (self.rho_ice * self.Cp_ice) * self.h_active_layer * del_T
+        self.Ecci = (self.rho_ice  * self.Cp_ice ) * self.h_active_layer * del_T
         self.Ecci = np.maximum(self.Ecci, np.array([0.0]))
 
-        # Time and datetime variables - these can stay as scalars
-        self.start_year, self.start_month, self.start_day, self.start_hour = self._parse_yyyymmddhh(
-            self.cfg.start_time
-        )
-        self.end_year, self.end_month, self.end_day, self.end_hour = self._parse_yyyymmddhh(self.cfg.end_time)
-        self.year = self.start_year
-        self.julian_day = solar.Julian_Day(
-            self.start_month, self.start_day, self.start_hour, year=self.start_year
-        )
-        self.start_time = pd.to_datetime(
-            solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
-        )
+        # --- time parsing (build start/end datetimes early!) ---
+        self.start_year, self.start_month, self.start_day, self.start_hour = self._parse_yyyymmddhh(self.cfg.start_time)
+        self.end_year,   self.end_month,   self.end_day,   self.end_hour   = self._parse_yyyymmddhh(self.cfg.end_time)
+
         self.start_datetime = pd.to_datetime(
             solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
-        )  # Topoflow enumerates the time via start_datetime
+        )
+        self.end_datetime = pd.to_datetime(
+            solar.get_datetime_str(self.end_year, self.end_month, self.end_day, self.end_hour, 0, 0)
+        )
 
-        # --- internal wind state ---
-        self._wind_u = 0.0   # m s-1, x-component
-        self._wind_v = 0.0   # m s-1, y-component
-        self._wind_speed = 0.0  # m s-1, derived magnitude
+        # julian day seed
+        self.year = self.start_year
+        self.julian_day = solar.Julian_Day(self.start_month, self.start_day, self.start_hour, year=self.start_year)
 
-        # --- BMI time bookkeeping ---
-        self._timestep = 0  # integer step counter
-        #self._timestep_size_s = float(self.dt)  # seconds per update()
+        # --- wind state (components + magnitude) ---
+        self._wind_u = 0.0
+        self._wind_v = 0.0
+        self._wind_speed = 0.0
 
-        # Parse start/end datetimes from config (use your existing fields if present)
-        # Accept either pre-parsed fields or the YYYYmmddHH strings in cfg.{start,end}_time
-        if hasattr(self, "start_year"):
-            self.start_datetime = pd.to_datetime(
-                solar.get_datetime_str(
-                    self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0
-                )
-            )
-        else:
-            self.start_datetime = pd.to_datetime(self.cfg.start_time, format="%Y%m%d%H")
-
-        if hasattr(self, "end_year"):
-            self.end_datetime = pd.to_datetime(
-                solar.get_datetime_str(self.end_year, self.end_month, self.end_day, self.end_hour, 0, 0)
-            )
-        else:
-            self.end_datetime = pd.to_datetime(self.cfg.end_time, format="%Y%m%d%H")
-
-        # >>> moved here, after start/end datetimes exist <<<
-        self._finalize_time_bounds()
-
-        # --- derive total steps and end-of-run time in seconds ---
-        # total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
-        # self._n_steps = int(np.ceil(total_seconds / self._timestep_size_s - 1e-12))
-        # Exclusive end; adapter may request exactly this time.
-        # self._run_end_time_s = float(self._n_steps) * self._timestep_size_s
-
-        # --- derive total steps and end-of-run time in seconds ---
+        # --- adapter time bounds (so get_end_time() is always valid) ---
         total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
         dt = float(self._timestep_size_s)
+        n_full = int(np.floor(total_seconds / dt + 1e-12))  # number of advances to last valid state
+        self._n_steps = n_full + 1                           # number of *states* including t0
+        self._run_end_time_s = float(n_full) * dt            # last valid model time (current_time cannot exceed this)
+        self._adapter_end_time_s = float(n_full + 1) * dt    # one extra dt for adapter queries
 
-        # n_full = number of *advances* to reach the last valid state (e.g., 743 for May 1 00 → May 31 23 hourly)
-        n_full = int(np.floor(total_seconds / dt + 1e-12))
+        # --- previous storages for melt-rate limiting across steps ---
+        self.previous_swe = np.array(self.h_swe, dtype="float64").copy()
+        self.previous_iwe = np.array(self.h_iwe, dtype="float64").copy()
 
-        # Number of *states* (including t0) is n_full + 1; last valid current_time is n_full * dt
-        self._n_steps = n_full + 1
-        self._run_end_time_s = float(n_full) * dt                      # last valid model time (no stepping beyond this)
-        self._adapter_end_time_s = float((n_full + 1)) * dt            # one extra dt so adapters never “exceed” end time
+        # --- slope & aspect-dependent geometry ---
+        self.set_aspect_angle()
+        self.set_slope_angle()
 
-        self._warn_if_no_initial_storage()
+        # --- initial volumes from initial depths ---
+        self.vol_swe[:] = np.sum(np.float64(self.h_swe * self.cfg.da))
+        self.vol_iwe[:] = np.sum(np.float64(self.h_iwe * self.cfg.da))
 
-        #self._skip_solar_geometry = True
+        # --- time-step index ---
+        self._timestep = 0
+
+        # optionally skip expensive solar geometry if SW forcing exists
+        self._skip_solar_geometry = True
+
+        logger.info("initialize complete")
 
     def _init_three_day_snow_buffer(self) -> None:
         """
@@ -505,8 +461,12 @@ class BmiTopoflowGlacier(BmiBase):
         n_steps_3days = max(1, int(np.ceil(secs_3days / float(self.dt))))
         self.P_snow_3day_watershed = np.zeros(n_steps_3days, dtype="float64")
 
+
     def update(self) -> None:
+        """Advance the model by exactly one fixed time step (dt), without exceeding end time."""
         logger.info("update")
+
+        # Do not step beyond declared end time (treat tiny FP slack as 'at end')
         if self.get_current_time() >= (self.get_end_time() - 1e-12):
             return
 
@@ -514,12 +474,12 @@ class BmiTopoflowGlacier(BmiBase):
         # Meteorology / Energy part
         # -------------------------
         self.update_atm_pressure_from_elevation(T_C=True, MBAR=True)
-        self.update_p_integeral()
-        self.update_p_max()
-        self.update_p_rain()
-        self.update_p_snow()
-        self.update_p_rain_integeral()
-        self.update_p_snow_integeral()
+        self.update_P_integral()           # total precip (leq) accumulator
+        self.update_P_max()
+        self.update_P_rain()
+        self.update_P_snow()
+        self.update_P_rain_integral()
+        self.update_P_snow_integral()
         self.update_saturation_vapor_pressure()
         self.update_vapor_pressure_from_spHum_AirPre()
         self.update_RH()
@@ -547,16 +507,28 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_snow_meltrate()
         self.update_ice_meltrate()
 
+        # optional limiters and combined melt (only if present in your file)
         if hasattr(self, "enforce_max_snow_meltrate"):
             self.enforce_max_snow_meltrate()
         if hasattr(self, "enforce_max_ice_meltrate"):
             self.enforce_max_ice_meltrate()
-
         if hasattr(self, "update_combined_meltrate"):
             self.update_combined_meltrate()
 
+        # advance index AFTER computing step diagnostics
         self._timestep = int(getattr(self, "_timestep", 0)) + 1
-        logger.info(f"advanced to step={self._timestep} t={self.get_current_time():0.1f}s")
+
+        # debug line for one-cell runs
+        try:
+            logger.info(
+                "Qsum=%.3f W/m2, SM=%.6e m/s, IM=%.6e m/s, P_rain=%.6e m/s",
+                float(np.asarray(self.Q_sum).reshape(-1)[0]),
+                float(np.asarray(self.SM).reshape(-1)[0]),
+                float(np.asarray(self.IM).reshape(-1)[0]),
+                float(np.asarray(self.P_rain).reshape(-1)[0]),
+            )
+        except Exception:
+            pass
 
         logger.info(f"Qsum={float(np.asarray(self.Q_sum).reshape(-1)[0]):.3f} W/m2, "
              f"SM={float(np.asarray(self.SM).reshape(-1)[0]):.6e} m/s, "
@@ -683,7 +655,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain and da are both either scalar or grid.
         -------------------------------------------------
         """  # noqa: D205
-        #logger.info("update_p_integeral")
+        #logger.info("update_p_integral")
         volume = np.double(self.P * self.da_m2 * self.dt)  # [m^3 in the unit of self.dt]
         self.vol_P += np.sum(volume)
 
@@ -1023,13 +995,18 @@ class BmiTopoflowGlacier(BmiBase):
         # See: https://en.wikipedia.org/wiki/Dew_point
         # -----------------------------------------------
         """  # noqa: D205
-        #logger.info("update_dew_point")
         a = 6.1121  # [mbar]
         b = 18.678
         c = 257.14  # [deg C]
         # d = 234.5    # [deg C]
-        log_term = np.log(self.e_air / a)
-        self.T_dew = c * log_term / (b - log_term)  # [deg C]
+        # Floor e_air to a tiny positive number to avoid -inf/NaN on first step
+        e_air_mbar = np.asarray(self.e_air, dtype="float64")
+        e_air_mbar = np.maximum(e_air_mbar, 1e-9)
+        log_term = np.log(e_air_mbar / a)
+        self.T_dew = c * log_term / (b - log_term)
+
+        # log_term = np.log(self.e_air / a)
+        # self.T_dew = c * log_term / (b - log_term)  # [deg C
 
     def update_T_surf(self):
         """
@@ -1665,10 +1642,13 @@ class BmiTopoflowGlacier(BmiBase):
         # E_rem = energy remaining in excess of Ecci
         # -----------------------------------------------
         """  # noqa: D205
-        #logger.info("update_ice_meltrate")
         E_in = self.Q_sum * self.dt
         E_rem = np.maximum(E_in - self.Ecci, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
+
+        if not hasattr(self, "previous_iwe"):
+            self.previous_iwe = np.array(self.h_iwe, dtype="float64").copy()
+        delta_iwe = np.asarray(self.h_iwe, dtype="float64") - np.asarray(self.previous_iwe, dtype="float64")
 
         M = Qm / (self.rho_H2O * self.Lf)  # [m/s]  TODO: m/hour? also shouldn't it be self.rho_ice?
         IM = np.maximum(M, np.float64(0))
@@ -2075,32 +2055,48 @@ class BmiTopoflowGlacier(BmiBase):
         return len(self._outputs)
 
     def get_input_var_names(self) -> list[str]:
+        """Return BMI input variable names that NGen can set."""
         logger.info("get_input_var_names")
-        names: list[str] = []
-        if hasattr(self, "_inputs") and self._inputs is not None:
-            names = list(self._inputs.names())
-        logger.info(f"inputs: {names}")
-        return names
+        # The Context you build from _dynamic_input_vars already has the names.
+        return list(self._dynamic_inputs.names())
 
     def get_output_var_names(self) -> list[str]:
+        """Return BMI output variable names that NGen can read."""
         logger.info("get_output_var_names")
-        names: list[str] = []
-        if hasattr(self, "_outputs") and self._outputs is not None:
-            names = list(self._outputs.names())
-        logger.info(f"outputs: {names}")
-        return names
+        return list(self._outputs.names())
 
-    def set_value(self, name: str, values: np.ndarray) -> None:
-        logger.info(f"set_value: {name}")
-        arr = np.asarray(values)
-        if hasattr(self, "_inputs") and name in self._inputs:
-            self._inputs.set_value(name, arr)
+    def get_value(self, name: str, dest) -> None:
+        """BMI get_value: copy variable 'name' into provided 'dest' array."""
+        # Prefer outputs first, then inputs, so discharge/melt are readable
+        if name in self._outputs:
+            src = self._outputs.value(name)
+        elif name in self._dynamic_inputs:
+            src = self._dynamic_inputs.value(name)
+        else:
+            raise KeyError(f"Unknown BMI variable name: {name}")
+        np.copyto(dest, np.asarray(src, dtype="float64"))
+
+    def set_value(self, name: str, values) -> None:
+        """BMI set_value: assign into BMI variable 'name' from 'values' array."""
+        arr = np.asarray(values, dtype="float64").reshape(-1)
+
+        # Handle inputs (forcing) that NGen writes
+        if name in self._dynamic_inputs:
+            # Special-case units you defined in _dynamic_input_vars
+            # P (mm h-1) -> internal m s-1 via self.mmph_to_mps (set in initialize)
+            if name == "atmosphere_water__liquid_equivalent_precipitation_rate":
+                self.P = arr  # property handles mm/h -> m/s
+                return
+            # Everything else is stored as-is
+            self._dynamic_inputs.set_value(name, arr)
             return
-        if hasattr(self, "_outputs") and name in self._outputs:
+
+        # Handle outputs (rare for BMI but allowed)
+        if name in self._outputs:
             self._outputs.set_value(name, arr)
             return
-        raise KeyError(f"Variable not found: {name}")
 
+        raise KeyError(f"Unknown BMI variable name: {name}")
 
     def _warn_if_no_initial_storage(self) -> None:
         try:
@@ -2136,17 +2132,6 @@ class BmiTopoflowGlacier(BmiBase):
             self._outputs.set_value_at_indices(name, a_inds, a_src)
             return
         raise KeyError(f"Variable not found: {name}")
-
-    def get_value(self, name: str, dest: np.ndarray) -> np.ndarray:
-        logger.info(f"get_value: {name}")
-        if hasattr(self, "_outputs") and name in self._outputs:
-            src = self._outputs.value(name)
-        elif hasattr(self, "_inputs") and name in self._inputs:
-            src = self._inputs.value(name)
-        else:
-            raise KeyError(f"Variable not found: {name}")
-        dest[...] = np.asarray(src, dtype=dest.dtype)
-        return dest
 
     def get_value_ptr(self, name: str) -> NDArray:
         """Gets value in native form if exists in inputs or outputs"""
