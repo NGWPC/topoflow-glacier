@@ -292,8 +292,8 @@ class BmiTopoflowGlacier(BmiBase):
         try:
             input_parameters = {}
             log_level_set(input_parameters)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.info(str(e))
 
         # --- load config (YAML -> TopoflowGlacierConfig) ---
         with open(config_file) as f:
