@@ -23,6 +23,8 @@ _dynamic_input_vars = [
     ("atmosphere_water__liquid_equivalent_precipitation_rate", "mm h-1"),
     ("land_surface_radiation~incoming~shortwave__energy_flux", "W m-2"),
     ("land_surface_air__temperature", "degC"),
+    ("land_surface_wind__x_component_of_velocity", "m s-1"),
+    ("land_surface_wind__y_component_of_velocity", "m s-1"),
     # ("wind_speed_UV", "m sec-1"),
 ]
 
@@ -59,6 +61,8 @@ INTERNAL_NAME_CROSSWALK = {
     "land_surface_water__runoff_volume_flux": "M_total",
     "atmosphere_bottom_air_water-vapor__relative_saturation": "RH",
     "channel_water_x-section__volume_flow_rate": "Q_out",
+    "land_surface_wind__x_component_of_velocity": "U2D",
+    "land_surface_wind__y_component_of_velocity": "V2D",
     # Unused variables:
     # "atmosphere_bottom_air__mass-per-volume_density": "rho_air",
     # "atmosphere_bottom_air__mass-specific_isobaric_heat_capacity": "Cp_air",
@@ -325,6 +329,13 @@ class BmiTopoflowGlacier(BmiBase):
         self.days_per_dt = self.dt / 86400.0
         self._timestep_size_s = float(self.dt)
 
+        # >>> NEW: apply realization-provided times (if any) using the known dt
+        # This sets start/end datetimes and adapter bounds, overriding YAML
+        # if self._realization_start_str/_realization_end_str exist.
+        if hasattr(self, "_apply_realization_time_from_strings"):
+            self._apply_realization_time_from_strings()
+        # <<< END NEW
+
         # --- dynamic input & output contexts already exist from __init__ ---
         # Initialize meteorology / energy stores (mutable scalars/arrays used in update())
         self.T_surf = np.array([0.0], dtype="float64")
@@ -404,33 +415,40 @@ class BmiTopoflowGlacier(BmiBase):
         self.Ecci = (self.rho_ice  * self.Cp_ice ) * self.h_active_layer * del_T
         self.Ecci = np.maximum(self.Ecci, np.array([0.0]))
 
-        # --- time parsing (build start/end datetimes early!) ---
-        self.start_year, self.start_month, self.start_day, self.start_hour = self._parse_yyyymmddhh(self.cfg.start_time)
-        self.end_year,   self.end_month,   self.end_day,   self.end_hour   = self._parse_yyyymmddhh(self.cfg.end_time)
+        # --- time parsing & adapter bounds ---
+        # Only do the YAML-based time parsing if realization hasn't already set bounds
+        if getattr(self, "_adapter_end_time_s", None) is None:
+            # --- time parsing (build start/end datetimes early!) ---
+            self.start_year, self.start_month, self.start_day, self.start_hour = self._parse_yyyymmddhh(self.cfg.start_time)
+            self.end_year,   self.end_month,   self.end_day,   self.end_hour   = self._parse_yyyymmddhh(self.cfg.end_time)
 
-        self.start_datetime = pd.to_datetime(
-            solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
-        )
-        self.end_datetime = pd.to_datetime(
-            solar.get_datetime_str(self.end_year, self.end_month, self.end_day, self.end_hour, 0, 0)
-        )
+            self.start_datetime = pd.to_datetime(
+                solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
+            )
+            self.end_datetime = pd.to_datetime(
+                solar.get_datetime_str(self.end_year, self.end_month, self.end_day, self.end_hour, 0, 0)
+            )
 
-        # julian day seed
-        self.year = self.start_year
-        self.julian_day = solar.Julian_Day(self.start_month, self.start_day, self.start_hour, year=self.start_year)
+            # julian day seed
+            self.year = self.start_year
+            self.julian_day = solar.Julian_Day(self.start_month, self.start_day, self.start_hour, year=self.start_year)
+
+            # --- adapter time bounds (so get_end_time() is always valid) ---
+            total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
+            dt = float(self._timestep_size_s)
+            n_full = int(np.floor(total_seconds / dt + 1e-12))  # number of advances to last valid state
+            self._n_steps = n_full + 1                           # number of *states* including t0
+            self._run_end_time_s = float(n_full) * dt            # last valid model time (current_time cannot exceed this)
+            self._adapter_end_time_s = float(n_full + 1) * dt    # one extra dt for adapter queries
+        else:
+            # If realization already set dates, seed Julian day from those start fields.
+            self.year = self.start_datetime.year
+            self.julian_day = solar.Julian_Day(self.start_datetime.month, self.start_datetime.day, self.start_datetime.hour, year=self.year)
 
         # --- wind state (components + magnitude) ---
         self._wind_u = 0.0
         self._wind_v = 0.0
         self._wind_speed = 0.0
-
-        # --- adapter time bounds (so get_end_time() is always valid) ---
-        total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
-        dt = float(self._timestep_size_s)
-        n_full = int(np.floor(total_seconds / dt + 1e-12))  # number of advances to last valid state
-        self._n_steps = n_full + 1                           # number of *states* including t0
-        self._run_end_time_s = float(n_full) * dt            # last valid model time (current_time cannot exceed this)
-        self._adapter_end_time_s = float(n_full + 1) * dt    # one extra dt for adapter queries
 
         # --- previous storages for melt-rate limiting across steps ---
         self.previous_swe = np.array(self.h_swe, dtype="float64").copy()
@@ -461,20 +479,27 @@ class BmiTopoflowGlacier(BmiBase):
         n_steps_3days = max(1, int(np.ceil(secs_3days / float(self.dt))))
         self.P_snow_3day_watershed = np.zeros(n_steps_3days, dtype="float64")
 
-
     def update(self) -> None:
-        """Advance the model by exactly one fixed time step (dt), without exceeding end time."""
-        # logger.info("update")
+        """Advance exactly one dt without exceeding run end; safe for adapter fencepost."""
+        logger.debug("update")
 
-        # Do not step beyond declared end time (treat tiny FP slack as 'at end')
-        if self.get_current_time() >= (self.get_end_time() - 1e-12):
+        dt = float(self.get_time_step())
+        t_now = self.get_current_time()
+
+        # If we're already at/after true run end, no-op but snap index to the end.
+        run_end = float(getattr(self, "_run_end_time_s", 0.0))
+        if t_now > (run_end - 1e-12):
+            logger.info("Reached run end (forcing exhausted); no-op update.")
+            self._timestep = int(getattr(self, "_n_steps", 0))
+            if hasattr(self, "_t_index"):
+                self._t_index = int(getattr(self, "_n_steps", 0))
             return
 
         # -------------------------
         # Meteorology / Energy part
         # -------------------------
         self.update_atm_pressure_from_elevation(T_C=True, MBAR=True)
-        self.update_P_integral()           # total precip (leq) accumulator
+        self.update_P_integral()
         self.update_P_max()
         self.update_P_rain()
         self.update_P_snow()
@@ -507,7 +532,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_snow_meltrate()
         self.update_ice_meltrate()
 
-        # optional limiters and combined melt (only if present in your file)
+        # optional limiters and combined melt
         if hasattr(self, "enforce_max_snow_meltrate"):
             self.enforce_max_snow_meltrate()
         if hasattr(self, "enforce_max_ice_meltrate"):
@@ -517,8 +542,10 @@ class BmiTopoflowGlacier(BmiBase):
 
         # advance index AFTER computing step diagnostics
         self._timestep = int(getattr(self, "_timestep", 0)) + 1
+        if hasattr(self, "_t_index"):
+            self._t_index = int(getattr(self, "_t_index", 0)) + 1
 
-        # debug line for one-cell runs
+        # best-effort debug line for one-cell runs
         try:
             logger.debug(
                 "Qsum=%.3f W/m2, SM=%.6e m/s, IM=%.6e m/s, P_rain=%.6e m/s",
@@ -530,12 +557,6 @@ class BmiTopoflowGlacier(BmiBase):
         except Exception:
             pass
 
-        logger.debug(f"Qsum={float(np.asarray(self.Q_sum).reshape(-1)[0]):.3f} W/m2, "
-             f"SM={float(np.asarray(self.SM).reshape(-1)[0]):.6e} m/s, "
-             f"IM={float(np.asarray(self.IM).reshape(-1)[0]):.6e} m/s, "
-             f"P_rain={float(np.asarray(self.P_rain).reshape(-1)[0]):.6e} m/s")
-
-
     def finalize(self) -> None:
         """Clean up any internal resources of the model"""
         logger.info("finalize")
@@ -546,17 +567,122 @@ class BmiTopoflowGlacier(BmiBase):
         dt = self.get_time_step()
         end = self.get_end_time()
         target = min(float(until), float(end))
+        logger.info(f"target: {target}")
         t = self.get_current_time()
+        logger.info(f"current_time : {t}")
         if t >= target:
+            logger.info("target reached")
             return
         remaining = max(0.0, target - t)
+        logger.info("remaining : {remaining}")
         n_steps = int(np.floor((remaining + 1e-12) / dt))
+        logger.info("remaining : {remaining}    n_steps : {n_steps}")
         for _ in range(n_steps):
             self.update()
-            
+    
+    def _parse_iso_like(self, s: str) -> datetime:
+        """
+        Parse a realization-provided datetime string.
+        Accepts formats like:
+          'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD HH:MM', 'YYYY-MM-DD HH',
+          'YYYY-MM-DD', or compact 'YYYYMMDDHH'.
+        Raises ValueError if unrecognized.
+        """
+        s = str(s).strip().replace("T", " ")
+        for fmt in ("%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%d %H:%M",
+                    "%Y-%m-%d %H",
+                    "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                pass
+        try:
+            # compact fallback
+            return datetime.strptime(s.replace("-", ""), "%Y%m%d%H")
+        except ValueError:
+            raise ValueError(f"Unrecognized datetime string: {s!r}")
+
+    def adapter_set_realization_times(self, start_iso: str, end_iso: str) -> None:
+        """
+        Called by the NGen BMI adapter (or your driver) BEFORE/AT initialize
+        to provide the realization’s time window. This does not compute
+        bounds yet; initialize will consume these values.
+        """
+        self._realization_start_str = str(start_iso)
+        self._realization_end_str   = str(end_iso)
+
+    def _recompute_adapter_time_bounds(self, start_dt: datetime, end_dt: datetime) -> None:
+        """
+        Given concrete datetimes and the already-known dt (seconds), recompute
+        adapter/bookkeeping times so get_start_time/get_end_time are consistent.
+        """
+        dt = float(self._timestep_size_s)
+        if dt <= 0.0:
+            raise ValueError("Time step (dt) must be positive before setting time bounds.")
+
+        if end_dt <= start_dt:
+            raise ValueError("End time must be strictly after start time.")
+
+        total_seconds = float((end_dt - start_dt).total_seconds())
+        n_full = int(np.floor(total_seconds / dt + 1e-12))
+
+        self._n_steps = n_full + 1
+        self._adapter_start_time_s = 0.0
+        self._run_end_time_s = float(n_full) * dt
+        self._adapter_end_time_s = float(n_full + 1) * dt
+
+        self.start_datetime = pd.to_datetime(start_dt)
+        self.end_datetime   = pd.to_datetime(end_dt)
+        self.start_year, self.start_month, self.start_day, self.start_hour = (
+            self.start_datetime.year, self.start_datetime.month, self.start_datetime.day, self.start_datetime.hour
+        )
+        self.end_year, self.end_month, self.end_day, self.end_hour = (
+            self.end_datetime.year, self.end_datetime.month, self.end_datetime.day, self.end_datetime.hour
+        )
+
+        logger.info(
+            "Realization time applied: start=%s end=%s dt=%gs n_steps=%d "
+            "(run_end=%gs, adapter_end=%gs)",
+            self.start_datetime, self.end_datetime, dt, self._n_steps,
+            self._run_end_time_s, self._adapter_end_time_s
+        )
+
+    def _apply_realization_time_from_strings(self) -> None:
+        """
+        If the realization provided start/end (via adapter_set_realization_times),
+        override any YAML/config times and recompute adapter bounds.
+        """
+        start_s = getattr(self, "_realization_start_str", None)
+        end_s   = getattr(self, "_realization_end_str", None)
+        if not start_s or not end_s:
+            return
+
+        start_dt = self._parse_iso_like(start_s)
+        end_dt   = self._parse_iso_like(end_s)
+        self._recompute_adapter_time_bounds(start_dt, end_dt)
+
     def get_start_time(self) -> float:
-        # logger.info("get_start_time")
-        return 0.0
+        """BMI: start time in seconds since model epoch (0 for this run)."""
+        start_s = getattr(self, "_adapter_start_time_s", None)
+        if start_s is None:
+            start_s = 0.0
+        logger.debug("get_start_time: %s", start_s)
+        return float(start_s)
+
+    def get_end_time(self) -> float:
+        """
+        BMI: end time in seconds. We prefer adapter fencepost if present,
+        else last valid run time, else fall back to _n_steps * dt.
+        """
+        end_s = getattr(self, "_adapter_end_time_s", None)
+        if end_s is None:
+            end_s = getattr(self, "_run_end_time_s", None)
+        if end_s is None:
+            nsteps = int(getattr(self, "_n_steps", 0))
+            end_s = nsteps * self.get_time_step()
+        logger.debug("get_end_time: %s", end_s)
+        return float(end_s)
 
     def get_time_step(self) -> float:
         # logger.info(f"get_time_step: {self._timestep_size_s}")
@@ -572,39 +698,56 @@ class BmiTopoflowGlacier(BmiBase):
         # logger.debug("get_time_units")
         return "s"
 
-    def get_end_time(self) -> float:
-        # logger.info("get_end_time")
-        end_s = getattr(self, "_adapter_end_time_s", None)
-        if end_s is None:
-            end_s = getattr(self, "_run_end_time_s", None)
-        if end_s is None:
-            nsteps = int(getattr(self, "_n_steps", 0))
-            end_s = nsteps * self.get_time_step()
-        logger.debug(f"get_end_time: {end_s}")
-        return float(end_s)
-
     def get_current_time(self) -> float:
-        # logger.info("get_current_time")
-        step = int(getattr(self, "_timestep", 0))
-        t = step * self.get_time_step()
-        logger.debug(f"{t}")
-        return float(t)
+        """Current model time in seconds since start, based on internal step index."""
+        dt = float(self.get_time_step())
+        t = float(getattr(self, "_t_index", 0)) * dt
+        logger.info(f"get_current_time: t_index={getattr(self, '_t_index', 0)}, t={t}")
+        return t
 
     def is_at_end_time(self) -> bool:
-        # logger.info("is_at_end_time")
+        logger.info(f"is_at_end_time  {self.get_end_time()}")
+
         return self.get_current_time() >= (self.get_end_time() - 1e-12)
 
     def _parse_yyyymmddhh(self, s: str) -> tuple[int, int, int, int]:
-        """Accepts 'YYYYMMDD-HH' (e.g., '20231001-01') or 'YYYYMMDDHH'. Returns (year, month, day, hour, dt)."""
+        """Parse a variety of 'start_time'/'end_time' strings into (year, month, day, hour).
+        Accepted formats:
+          - 'YYYY-MM-DD HH:MM:SS'
+          - 'YYYY-MM-DD HH:MM'
+          - 'YYYY-MM-DDTHH:MM:SS'
+          - 'YYYYMMDDHH'
+          - 'YYYYMMDD-HH'
+        """
+        from datetime import datetime
+
         s = str(s).strip()
-        fmt = "%Y%m%d-%H" if "-" in s else "%Y%m%d%H"
-        dt = datetime.strptime(s, fmt)  # raises ValueError if malformed
-        return dt.year, dt.month, dt.day, dt.hour
+
+        # Compact numeric forms
+        if len(s) == 10 and s.isdigit():
+            # 'YYYYMMDDHH'
+            return int(s[0:4]), int(s[4:6]), int(s[6:8]), int(s[8:10])
+
+        if len(s) == 11 and s[8] == '-' and s.replace('-', '').isdigit():
+            # 'YYYYMMDD-HH'
+            return int(s[0:4]), int(s[4:6]), int(s[6:8]), int(s[9:11])
+
+        # Flexible strptime attempts
+        for fmt in ("%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%d %H:%M",
+                    "%Y-%m-%dT%H:%M:%S"):
+            try:
+                dt = datetime.strptime(s, fmt)
+                return dt.year, dt.month, dt.day, dt.hour
+            except ValueError:
+                pass
+
+        # If we get here, we don't recognize the format
+        logger.fatal(f"Unrecognized datetime format: {s!r}")
+        raise ValueError(f"Unrecognized datetime format: {s!r}")
 
     def _recompute_wind_speed(self) -> None:
-        """Update derived wind speed magnitude from components."""
-        # Use hypot for numerical stability
-        self._wind_speed = float(np.hypot(self._wind_u, self._wind_v))
+        self._wind_speed = float((self._wind_u ** 2 + self._wind_v ** 2) ** 0.5)
 
     def update_atm_pressure_from_elevation(self, T_C=True, MBAR=False):
         """
@@ -2067,6 +2210,14 @@ class BmiTopoflowGlacier(BmiBase):
 
     def get_value(self, name: str, dest) -> None:
         """BMI get_value: copy variable 'name' into provided 'dest' array."""
+
+        if name == "wind_speed_UV":
+            arr = np.array([self._wind_speed], dtype="float64")
+            if dest is None:
+                return arr.copy()
+            dest[: arr.size] = arr
+            return dest
+
         # Prefer outputs first, then inputs, so discharge/melt are readable
         if name in self._outputs:
             src = self._outputs.value(name)
@@ -2079,6 +2230,131 @@ class BmiTopoflowGlacier(BmiBase):
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
         arr = np.asarray(values, dtype="float64").reshape(-1)
+
+        if name == "land_surface_wind__x_component_of_velocity":
+            # Accept U-component (m s-1)
+            self._wind_u = float(arr[0])
+            try:
+                self._dynamic_inputs.set_value(name, arr)
+            except Exception:
+                pass
+            try:
+                self._recompute_wind_speed()
+            except Exception:
+                pass
+            return
+
+        if name == "land_surface_wind__y_component_of_velocity":
+            # Accept V-component (m s-1)
+            self._wind_v = float(arr[0])
+            try:
+                self._dynamic_inputs.set_value(name, arr)
+            except Exception:
+                pass
+            try:
+                self._recompute_wind_speed()
+            except Exception:
+                pass
+            return
+
+        if name in ("U2D", "atmosphere_wind__x_component_of_velocity"):
+            # Alternate names for U-component
+            self._wind_u = float(arr[0])
+            try:
+                self._dynamic_inputs.set_value(name, arr)
+            except Exception:
+                pass
+            try:
+                self._recompute_wind_speed()
+            except Exception:
+                pass
+            return
+
+        if name in ("V2D", "atmosphere_wind__y_component_of_velocity"):
+            # Alternate names for V-component
+            self._wind_v = float(arr[0])
+            try:
+                self._dynamic_inputs.set_value(name, arr)
+            except Exception:
+                pass
+            try:
+                self._recompute_wind_speed()
+            except Exception:
+                pass
+            return
+
+        if name in ("wind_speed_UV", "land_surface_wind__speed", "atmosphere_wind__speed"):
+            # Legacy: directly set wind speed magnitude (m s-1)
+            self._wind_speed = float(arr[0])
+            try:
+                # Keep a copy in dynamic inputs if present
+                self._dynamic_inputs.set_value("wind_speed_UV", np.array([self._wind_speed], dtype="float64"))
+            except Exception:
+                pass
+            return
+
+        if name == "atmosphere_water__liquid_equivalent_precipitation_rate":
+            # Convert mm h-1 -> m s-1
+            vals_mps = arr / 3_600_000.0
+            try:
+                self._dynamic_inputs.set_value(name, vals_mps)
+            except Exception:
+                pass
+            return
+
+        # Pass-through for other known dynamic inputs
+        try:
+            if name in self._dynamic_inputs:
+                self._dynamic_inputs.set_value(name, arr)
+                return
+        except Exception:
+            # If context lookup fails, continue to outputs/raise
+            pass
+
+        # Allow writing to outputs if caller uses set_value on them
+        try:
+            if name in self._outputs:
+                self._outputs.set_value(name, arr)
+                return
+        except Exception:
+            pass
+
+        raise KeyError(f"Unknown BMI variable name: {name}")
+
+    def set_value_old(self, name: str, values) -> None:
+        """BMI set_value: assign into BMI variable 'name' from 'values' array."""
+        arr = np.asarray(values, dtype="float64").reshape(-1)
+
+        if name == "land_surface_wind__x_component_of_velocity":
+            # store component and recompute speed
+            self._wind_u = float(arr[0])
+            self._recompute_wind_speed()
+            # Keep internal mirrors if you expose them via Context elsewhere
+            try:
+                self._dynamic_inputs.set_value("land_surface_wind__x_component_of_velocity", arr)
+            except Exception:
+                pass
+            return
+
+        if name == "land_surface_wind__y_component_of_velocity":
+            self._wind_v = float(arr[0])
+            self._recompute_wind_speed()
+            try:
+                self._dynamic_inputs.set_value("land_surface_wind__y_component_of_velocity", arr)
+            except Exception:
+                pass
+            return
+
+        # Legacy compatibility: some scripts used to call this
+        if name == "wind_speed_UV":
+            # Accept, but treat as derived speed only. NGen should not send this.
+            self.uz = arr
+            # Accept scalar or 1-element array, keep internal cache in sync
+            # v = float(np.asarray(values).reshape(-1)[0])
+            # self._wind_speed = v
+            # Also reflect it in the dynamic-input context so BMI reads work:
+            # self._dynamic_inputs.set_value("wind_speed_UV", np.array([v], dtype="float64"))
+            return
 
         # Handle inputs (forcing) that NGen writes
         if name in self._dynamic_inputs:
@@ -2237,11 +2513,10 @@ class BmiTopoflowGlacier(BmiBase):
             "land_surface_air__pressure": "Pa",
             "atmosphere_air_water~vapor__relative_saturation": "1",
 
-            # Optional/legacy (supported but not advertised)
             "wind_speed_UV": "m s-1",
             "land_surface_wind__speed": "m s-1",
-            "atmosphere_wind__x_component_of_velocity": "m s-1",
-            "atmosphere_wind__y_component_of_velocity": "m s-1",
+            "land_surface_wind__x_component_of_velocity": "m s-1",
+            "land_surface_wind__y_component_of_velocity": "m s-1",
 
             # Outputs / states
             "snowpack__melt_volume_flux": "m s-1",
