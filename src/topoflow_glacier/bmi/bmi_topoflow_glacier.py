@@ -5,6 +5,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yaml
+import sys
+import gs
 from numpy.typing import NDArray
 
 from topoflow_glacier.bmi.bmi_base import BmiBase
@@ -415,6 +417,8 @@ class BmiTopoflowGlacier(BmiBase):
         self.Ecci = (self.rho_ice  * self.Cp_ice ) * self.h_active_layer * del_T
         self.Ecci = np.maximum(self.Ecci, np.array([0.0]))
 
+        self._finalized: bool = False
+
         # --- time parsing & adapter bounds ---
         # Only do the YAML-based time parsing if realization hasn't already set bounds
         if getattr(self, "_adapter_end_time_s", None) is None:
@@ -558,25 +562,112 @@ class BmiTopoflowGlacier(BmiBase):
             pass
 
     def finalize(self) -> None:
-        """Clean up any internal resources of the model"""
-        logger.info("finalize")
-        pass
+        """
+        Clean up any internal resources of the model.
+
+        - Idempotent (safe to call multiple times).
+        - Avoids heavy work when the Python interpreter is shutting down.
+        - Drops large arrays/contexts to help GC and reduce teardown issues.
+        """
+        # If we've already finalized this instance, do nothing.
+        if getattr(self, "_finalized", False):
+            logger.debug("finalize: already finalized; skipping.")
+            return
+
+        # Mark as finalized **first** so even if something below goes wrong
+        # we won't re-enter from a second call.
+        self._finalized = True
+
+        # Best-effort: if the interpreter is in the middle of shutting down,
+        # avoid touching anything complicated (logging, numpy, etc.).
+        try:
+            is_finalizing = getattr(sys, "is_finalizing", None)
+            if callable(is_finalizing) and is_finalizing():
+                # Don't do any heavy cleanup; the interpreter is already
+                # tearing everything down.
+                return
+        except Exception:
+            # If anything goes wrong here, just continue with a minimal cleanup.
+            pass
+
+        logger.info("finalize: starting cleanup of Topoflow-Glacier BMI instance.")
+
+        # Best-effort cleanup — all inside a big try so we never raise.
+        try:
+            # Drop references to big arrays / state that NGen will no longer use.
+            # This mainly helps with memory and keeps GC simple.
+            attrs_to_clear = [
+                "_dynamic_inputs",
+                "_outputs",
+                "cfg",
+                "slopes",
+                "P_snow_3day_watershed",
+                "T_surf", "RH", "p0", "z",
+                "cloud_factor", "canopy_factor",
+                "P_rain", "P_snow",
+                "e_air", "e_surf",
+                "em_air",
+                "Qn_SW", "Qn_LW",
+                "Q_sum", "Qc", "Qa", "Qe", "Qh",
+                "P_max", "vol_P", "vol_PR", "vol_PS",
+                "Qn_tot",
+                "T0", "h_active_layer",
+                "mr_ice", "vol_MR", "meltrate",
+                "vol_SM", "vol_IM", "vol_M_total",
+                "vol_swe", "vol_swe_start",
+                "vol_iwe", "vol_iwe_start",
+                "albedo", "n",
+                "Eccs", "Ecci",
+                "h_snow", "h_swe",
+                "h_ice", "h_iwe",
+                "M_total", "SM", "IM",
+                "previous_swe", "previous_iwe",
+                "start_datetime", "end_datetime",
+            ]
+
+            for name in attrs_to_clear:
+                if hasattr(self, name):
+                    try:
+                        setattr(self, name, None)
+                    except Exception:
+                        # Don't let any single attribute break finalize
+                        pass
+
+            # Clear dynamic wind state as well
+            for name in ("_wind_u", "_wind_v", "_wind_speed"):
+                if hasattr(self, name):
+                    try:
+                        setattr(self, name, 0.0)
+                    except Exception:
+                        pass
+
+            # Optional: encourage garbage collection once we've dropped references.
+            try:
+                gc.collect()
+            except Exception:
+                pass
+
+            logger.info("finalize: cleanup complete.")
+        except Exception as e:
+            # Never propagate exceptions out of finalize; just log if we still can.
+            try:
+                logger.warning(f"finalize: swallowed exception during cleanup: {e!r}")
+            except Exception:
+                # Logging itself might fail late in teardown; ignore.
+                pass
+
 
     def update_until(self, until: float) -> None:
         # logger.info("update_until")
         dt = self.get_time_step()
         end = self.get_end_time()
         target = min(float(until), float(end))
-        logger.info(f"target: {target}")
         t = self.get_current_time()
-        logger.info(f"current_time : {t}")
         if t >= target:
             logger.info("target reached")
             return
         remaining = max(0.0, target - t)
-        logger.info("remaining : {remaining}")
         n_steps = int(np.floor((remaining + 1e-12) / dt))
-        logger.info("remaining : {remaining}    n_steps : {n_steps}")
         for _ in range(n_steps):
             self.update()
     
@@ -702,7 +793,7 @@ class BmiTopoflowGlacier(BmiBase):
         """Current model time in seconds since start, based on internal step index."""
         dt = float(self.get_time_step())
         t = float(getattr(self, "_t_index", 0)) * dt
-        logger.info(f"get_current_time: t_index={getattr(self, '_t_index', 0)}, t={t}")
+        logger.debug(f"get_current_time: t_index={getattr(self, '_t_index', 0)}, t={t}")
         return t
 
     def is_at_end_time(self) -> bool:
