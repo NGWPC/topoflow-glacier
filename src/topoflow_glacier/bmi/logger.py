@@ -114,6 +114,7 @@ def get_log_file_path():
     except:
         print(f"Unable to open log file for {MODULE_NAME}: {logFilePath}", flush=True)
         print("Log entries will be writen to stdout", flush=True)
+    print(logFilePath)
 
     return logFilePath, appendEntries
 
@@ -198,6 +199,7 @@ def configure_logging():
 
         # Get the log file name from env var or a default
         logFilePath, appendEntries = get_log_file_path()
+        print(logFilePath)
         if logFilePath:
             # Set the open mode
             openMode = "a" if appendEntries else "w"

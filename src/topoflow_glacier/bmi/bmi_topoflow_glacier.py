@@ -304,6 +304,11 @@ class BmiTopoflowGlacier(BmiBase):
         # --- load config (YAML -> TopoflowGlacierConfig) ---
         with open(config_file) as f:
             cfg_dict = yaml.safe_load(f)
+
+        for key in ("start_time", "end_time"):
+            if key in cfg_dict and not isinstance(cfg_dict[key], str):
+                cfg_dict[key] = str(cfg_dict[key])
+
         self.cfg = TopoflowGlacierConfig.model_validate(cfg_dict)
 
         # --- constants & unit helpers ---
