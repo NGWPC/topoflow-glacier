@@ -2608,6 +2608,7 @@ class BmiTopoflowGlacier(BmiBase):
             "land_surface_radiation~incoming~shortwave__energy_flux": "W m-2",
             "land_surface_air__pressure": "Pa",
             "atmosphere_air_water~vapor__relative_saturation": "1",
+            "atmosphere_bottom_air_water-vapor__relative_saturation": "1",
 
             "wind_speed_UV": "m s-1",
             "land_surface_wind__speed": "m s-1",
