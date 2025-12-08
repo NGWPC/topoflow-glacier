@@ -30,6 +30,10 @@ _dynamic_input_vars = [
     # ("wind_speed_UV", "m sec-1"),
 ]
 
+_calib_vars = [
+    ("T_rain_snow", "degC")
+]
+
 _output_vars = [
     ("snowpack__depth", "m"),
     ("snowpack__liquid-equivalent_depth", "m"),
@@ -127,15 +131,15 @@ class BmiTopoflowGlacier(BmiBase):
 
     def __init__(self) -> None:
         self._dynamic_inputs = build_context(_dynamic_input_vars)
+        self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
         self._timestep: int = 0
         configure_logging()
-                
+
         # Internal wind state (components + derived magnitude)
         self._wind_u: float = 0.0     # m s-1
         self._wind_v: float = 0.0     # m s-1
-        self._wind_speed: float = 0.0 # m s-1 (derived)
-
+        self._wind_speed: float = 0.0  # m s-1 (derived)
 
     @property
     def P(self) -> np.ndarray:
@@ -199,6 +203,11 @@ class BmiTopoflowGlacier(BmiBase):
     def Hum_sp(self, value: np.ndarray) -> None:
         """Setter for the Humidity input state variable"""
         self._dynamic_inputs.set_value("atmosphere_air_water~vapor__relative_saturation", value)
+
+    @property
+    def T_rain_snow(self) -> np.ndarray:
+        """Getter for the Rain-Snow Temperature Threshold"""
+        return float(self._calibs.value("T_rain_snow")[0])
 
     @property
     def uz(self) -> np.ndarray:
@@ -379,7 +388,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.rho_snow = np.float64(self.cfg.rho_snow)
         self.Cp_snow  = np.float64(self.cfg.Cp_snow)
         self.Lf       = np.float64(self.cfg.Lf)
-        self.T_rain_snow = np.float64(self.cfg.T_rain_snow)
+        self._calibs.set_value("T_rain_snow", np.array([self.cfg.T_rain_snow], dtype="float64"))
 
         # --- state variables ---
         self.T0 = np.array([self.cfg.T0], dtype="float64")
@@ -2327,6 +2336,14 @@ class BmiTopoflowGlacier(BmiBase):
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
         arr = np.asarray(values, dtype="float64").reshape(-1)
 
+        if name == "T_rain_snow":
+            # Set calibratable parameters
+            try:
+                self._calibs.set_value(name, arr)
+            except Exception:
+                pass
+            return
+
         if name == "land_surface_wind__x_component_of_velocity":
             # Accept U-component (m s-1)
             self._wind_u = float(arr[0])
@@ -2402,6 +2419,15 @@ class BmiTopoflowGlacier(BmiBase):
         try:
             if name in self._dynamic_inputs:
                 self._dynamic_inputs.set_value(name, arr)
+                return
+        except Exception:
+            # If context lookup fails, continue to outputs/raise
+            pass
+
+        # Pass-through for other known calib inputs
+        try:
+            if name in self._calibs:
+                self._calibs.set_value(name, arr)
                 return
         except Exception:
             # If context lookup fails, continue to outputs/raise
@@ -2509,7 +2535,7 @@ class BmiTopoflowGlacier(BmiBase):
         """Gets value in native form if exists in inputs or outputs"""
         if name in ("wind_speed_UV", "land_surface_wind__speed"):
             return np.array([self._wind_speed], dtype="float64")
-        return first_containing(name, self._outputs, self._dynamic_inputs).value(name)
+        return first_containing(name, self._outputs, self._dynamic_inputs, self._calibs).value(name)
 
     def get_var_itemsize(self, name: str) -> int:
         """Size, in bytes, of a single element of the variable name
