@@ -4,14 +4,17 @@ from collections.abc import Iterable, Iterator
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
-from topoflow_glacier.bmi.logger import configure_logging, logger
+
+from topoflow_glacier.log_level_set import MODULE_NAME
+import logging
+LOG = logging.getLogger(MODULE_NAME)
 
 def _ensure(condition: bool, message: str) -> None:
     """
     Assert-like guard that logs a FATAL message before raising AssertionError.
     """
     if not condition:
-        logger.fatal(message)  # FATAL log before asserting
+        LOG.critical(message)  # FATAL log before asserting
         raise AssertionError(message)
 
 class Var(BaseModel):
