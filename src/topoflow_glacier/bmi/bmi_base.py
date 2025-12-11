@@ -1,5 +1,10 @@
 from bmipy import Bmi
 from numpy.typing import NDArray
+from topoflow_glacier.log_level_set import log_level_set, MODULE_NAME
+log_level_set()
+
+import logging
+LOG = logging.getLogger(MODULE_NAME)
 
 __all__ = ["BmiBase"]
 

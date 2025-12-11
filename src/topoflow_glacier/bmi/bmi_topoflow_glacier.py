@@ -14,7 +14,6 @@ from topoflow_glacier.bmi.config import TopoflowGlacierConfig
 from topoflow_glacier.physics import solar_funcs as solar
 from topoflow_glacier.physics.context import Context, build_context
 from topoflow_glacier.log_level_set import log_level_set, MODULE_NAME
-log_level_set()
 
 import logging
 LOG = logging.getLogger(MODULE_NAME)
@@ -142,6 +141,7 @@ class BmiTopoflowGlacier(BmiBase):
         self._wind_u: float = 0.0     # m s-1
         self._wind_v: float = 0.0     # m s-1
         self._wind_speed: float = 0.0  # m s-1 (derived)
+        log_level_set()
 
     @property
     def P(self) -> np.ndarray:
