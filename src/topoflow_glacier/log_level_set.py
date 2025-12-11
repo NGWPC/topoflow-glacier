@@ -15,7 +15,7 @@ DS                    = "/";                    # Directory separator
 LOG_MODULE_NAME_LEN   = 8;                      # Width of module name for log entries
 
 EV_EWTS_LOGGING       = "NGEN_EWTS_LOGGING";    # Enable/disable of Error Warning and Trapping System  
-EV_NGEN_LOGFILEPATH   = "NGEN_LOG_FILE_PATH";   # ngen log file 
+EV_NGEN_LOGFILEPATH   = "NGEN_LOG_FILE_PATH"   # ngen log file 
 EV_MODULE_LOGLEVEL    = "TFGLACR_LOGLEVEL";      # This modules log level
 EV_MODULE_LOGFILEPATH = "TFGLACR_LOGFILEPATH";   # This modules log full log filename
 

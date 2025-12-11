@@ -44,6 +44,7 @@ _output_vars = [
     ("glacier__liquid_equivalent_depth", "m"),
     ("glacier_ice__melt_volume_flux", "m s-1"),
     ("land_surface_water__runoff_volume_flux", "m s-1"),
+    ("land_surface_water__runoff_depth", "m"),
     ("atmosphere_bottom_air_water-vapor__relative_saturation", "-"),
     # NEW: discharge expected by NGen (m3 s-1)
     ("channel_water_x-section__volume_flow_rate", "m3 s-1"),
@@ -220,6 +221,17 @@ class BmiTopoflowGlacier(BmiBase):
     def uz(self, value: np.ndarray) -> None:
         """Setter for wind-speed magnitude (legacy support)."""
         self._wind_speed = float(np.asarray(value).reshape(-1)[0])
+
+    @property
+    def runoff_depth(self) -> np.ndarray:
+        """Getter for the runoff depth (m) variable"""
+        return self.outputs_.value("land_surface_water__runoff_depth")
+
+    @runoff_depth.setter
+    def runoff_depth(self, value: np.ndarray) -> None:
+        """Setter for runoff depth (m)."""
+        self._outputs.set_value("land_surface_water__runoff_depth", value)
+
 
     @property
     def SM(self) -> np.ndarray:
@@ -1491,6 +1503,7 @@ class BmiTopoflowGlacier(BmiBase):
         # Fast path: if SW_in (forcing) is available, use it directly.
         # Units are W m-2 and net shortwave = Kin * (1 - albedo) (Dingman 2015, Eq. 6B1.1)
         try:
+            # print(f"SW_in={self.SW_in}")
             SW_in = np.asarray(self.SW_in, dtype="float64")
         except Exception:
             SW_in = None
@@ -1916,6 +1929,12 @@ class BmiTopoflowGlacier(BmiBase):
         # NOTE: self.P (and hence self.P_rain) are in m s-1 already (converted in the setter).
         # Do NOT divide by 3600 here.
         M_total = self.IM + self.SM + self.P_rain  # [m s-1]
+
+        # Convert flux (m/s) to depth per timestep: depth = flux * dt
+        M_total_depth = M_total * self.dt
+
+        # Update BMI output variable
+        self._outputs.set_value("land_surface_water__runoff_depth", M_total_depth)
 
         # Persist flux (shape-safe)
         if isinstance(M_total, np.ndarray):
@@ -2640,6 +2659,7 @@ class BmiTopoflowGlacier(BmiBase):
             "snowpack__melt_volume_flux": "m s-1",
             "glacier_ice__melt_volume_flux": "m s-1",
             "land_surface_water__runoff_volume_flux": "m s-1",
+            "land_surface_water__runoff_depth": "m",
             "snowpack__depth": "m",
             "glacier_ice__thickness": "m",
             "snowpack__liquid-equivalent_depth": "m",
