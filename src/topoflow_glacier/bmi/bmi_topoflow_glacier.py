@@ -11,13 +11,10 @@ from numpy.typing import NDArray
 
 from topoflow_glacier.bmi.bmi_base import BmiBase
 from topoflow_glacier.bmi.config import TopoflowGlacierConfig
+from topoflow_glacier.bmi.logger import configure_logging, logger
 from topoflow_glacier.physics import solar_funcs as solar
 from topoflow_glacier.physics.context import Context, build_context
-from topoflow_glacier.log_level_set import log_level_set, MODULE_NAME
-log_level_set()
-
-import logging
-LOG = logging.getLogger(MODULE_NAME)
+from topoflow_glacier.log_level_set import log_level_set
 
 __all__ = ["BmiTopoflowGlacier"]
 
@@ -138,6 +135,7 @@ class BmiTopoflowGlacier(BmiBase):
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
         self._timestep: int = 0
+        configure_logging()
 
         # Internal wind state (components + derived magnitude)
         self._wind_u: float = 0.0     # m s-1
@@ -314,8 +312,15 @@ class BmiTopoflowGlacier(BmiBase):
         self._outputs.set_value("atmosphere_bottom_air_water-vapor__relative_saturation", value)
 
     def initialize(self, config_file: str | Path) -> None:
-        """Initialize the BMI model and pre-compute all bookkeeping needed by the adapter."""'
-        LOG.info("initialize")
+        """Initialize the BMI model and pre-compute all bookkeeping needed by the adapter."""
+        logger.info("initialize")
+
+        # --- logging knobs (no-ops if absent) ---
+        try:
+            input_parameters = {}
+            log_level_set(input_parameters)
+        except Exception as e:
+            logger.info(str(e))
 
         # --- load config (YAML -> TopoflowGlacierConfig) ---
         with open(config_file) as f:
@@ -347,7 +352,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.dt = float(self.cfg.dt)
         if self.dt <= 10.0:
             # Heuristic: legacy inputs often give hours as a small integer (1, 3, 6, …)
-            LOG.warning(f"dt={self.dt} looks like HOURS; converting to seconds (dt *= 3600).")
+            logger.warning(f"dt={self.dt} looks like HOURS; converting to seconds (dt *= 3600).")
             self.dt *= 3600.0
         self.days_per_dt = self.dt / 86400.0
         self._timestep_size_s = float(self.dt)
@@ -493,7 +498,7 @@ class BmiTopoflowGlacier(BmiBase):
         # optionally skip expensive solar geometry if SW forcing exists
         self._skip_solar_geometry = True
 
-        LOG.info("initialize complete")
+        logger.info("initialize complete")
 
     def _init_three_day_snow_buffer(self) -> None:
         """
@@ -506,7 +511,7 @@ class BmiTopoflowGlacier(BmiBase):
 
     def update(self) -> None:
         """Advance exactly one dt without exceeding run end; safe for adapter fencepost."""
-        LOG.debug("update")
+        logger.debug("update")
 
         dt = float(self.get_time_step())
         t_now = self.get_current_time()
@@ -514,7 +519,7 @@ class BmiTopoflowGlacier(BmiBase):
         # If we're already at/after true run end, no-op but snap index to the end.
         run_end = float(getattr(self, "_run_end_time_s", 0.0))
         if t_now > (run_end - 1e-12):
-            LOG.info("Reached run end (forcing exhausted); no-op update.")
+            logger.info("Reached run end (forcing exhausted); no-op update.")
             self._timestep = int(getattr(self, "_n_steps", 0))
             if hasattr(self, "_t_index"):
                 self._t_index = int(getattr(self, "_n_steps", 0))
@@ -572,7 +577,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         # best-effort debug line for one-cell runs
         try:
-            LOG.debug(
+            logger.debug(
                 "Qsum=%.3f W/m2, SM=%.6e m/s, IM=%.6e m/s, P_rain=%.6e m/s",
                 float(np.asarray(self.Q_sum).reshape(-1)[0]),
                 float(np.asarray(self.SM).reshape(-1)[0]),
@@ -592,7 +597,7 @@ class BmiTopoflowGlacier(BmiBase):
         """
         # If we've already finalized this instance, do nothing.
         if getattr(self, "_finalized", False):
-            LOG.debug("finalize: already finalized; skipping.")
+            logger.debug("finalize: already finalized; skipping.")
             return
 
         # Mark as finalized **first** so even if something below goes wrong
@@ -611,7 +616,7 @@ class BmiTopoflowGlacier(BmiBase):
             # If anything goes wrong here, just continue with a minimal cleanup.
             pass
 
-        LOG.info("finalize: starting cleanup of Topoflow-Glacier BMI instance.")
+        logger.info("finalize: starting cleanup of Topoflow-Glacier BMI instance.")
 
         # Best-effort cleanup — all inside a big try so we never raise.
         try:
@@ -668,24 +673,24 @@ class BmiTopoflowGlacier(BmiBase):
             except Exception:
                 pass
 
-            LOG.info("finalize: cleanup complete.")
+            logger.info("finalize: cleanup complete.")
         except Exception as e:
             # Never propagate exceptions out of finalize; just log if we still can.
             try:
-                LOG.warning(f"finalize: swallowed exception during cleanup: {e!r}")
+                logger.warning(f"finalize: swallowed exception during cleanup: {e!r}")
             except Exception:
                 # Logging itself might fail late in teardown; ignore.
                 pass
 
 
     def update_until(self, until: float) -> None:
-        LOG.debug("update_until")
+        # logger.info("update_until")
         dt = self.get_time_step()
         end = self.get_end_time()
         target = min(float(until), float(end))
         t = self.get_current_time()
         if t >= target:
-            LOG.info("target reached")
+            logger.info("target reached")
             return
         remaining = max(0.0, target - t)
         n_steps = int(np.floor((remaining + 1e-12) / dt))
@@ -753,7 +758,7 @@ class BmiTopoflowGlacier(BmiBase):
             self.end_datetime.year, self.end_datetime.month, self.end_datetime.day, self.end_datetime.hour
         )
 
-        LOG.info(
+        logger.info(
             "Realization time applied: start=%s end=%s dt=%gs n_steps=%d "
             "(run_end=%gs, adapter_end=%gs)",
             self.start_datetime, self.end_datetime, dt, self._n_steps,
@@ -779,7 +784,7 @@ class BmiTopoflowGlacier(BmiBase):
         start_s = getattr(self, "_adapter_start_time_s", None)
         if start_s is None:
             start_s = 0.0
-        LOG.debug("get_start_time: %s", start_s)
+        logger.debug("get_start_time: %s", start_s)
         return float(start_s)
 
     def get_end_time(self) -> float:
@@ -793,32 +798,32 @@ class BmiTopoflowGlacier(BmiBase):
         if end_s is None:
             nsteps = int(getattr(self, "_n_steps", 0))
             end_s = nsteps * self.get_time_step()
-        LOG.debug("get_end_time: %s", end_s)
+        logger.debug("get_end_time: %s", end_s)
         return float(end_s)
 
     def get_time_step(self) -> float:
-        LOG.debug(f"get_time_step: {self._timestep_size_s}")
+        # logger.info(f"get_time_step: {self._timestep_size_s}")
         #return float(self._timestep_size_s)
         dt = float(getattr(self, "_timestep_size_s", getattr(self, "dt", 0.0)))
         if dt <= 0.0:
             # Fallback so adapter never sees 0
             dt = 3600.0
-        LOG.debug("get_time_step: %s", dt)
+        logger.debug("get_time_step: %s", dt)
         return dt
 
     def get_time_units(self) -> str:
-        LOG.debug("get_time_units")
+        # logger.debug("get_time_units")
         return "s"
 
     def get_current_time(self) -> float:
         """Current model time in seconds since start, based on internal step index."""
         dt = float(self.get_time_step())
         t = float(getattr(self, "_t_index", 0)) * dt
-        LOG.debug(f"get_current_time: t_index={getattr(self, '_t_index', 0)}, t={t}")
+        logger.debug(f"get_current_time: t_index={getattr(self, '_t_index', 0)}, t={t}")
         return t
 
     def is_at_end_time(self) -> bool:
-        LOG.info(f"is_at_end_time  {self.get_end_time()}")
+        logger.info(f"is_at_end_time  {self.get_end_time()}")
 
         return self.get_current_time() >= (self.get_end_time() - 1e-12)
 
@@ -855,7 +860,7 @@ class BmiTopoflowGlacier(BmiBase):
                 pass
 
         # If we get here, we don't recognize the format
-        LOG.critical(f"Unrecognized datetime format: {s!r}")
+        logger.fatal(f"Unrecognized datetime format: {s!r}")
         raise ValueError(f"Unrecognized datetime format: {s!r}")
 
     def _recompute_wind_speed(self) -> None:
@@ -880,7 +885,7 @@ class BmiTopoflowGlacier(BmiBase):
         p0 : float
             Atmospheric pressure [Pa]
         """
-        LOG.debug("update_atm_pressure_from_elevation")
+        #logger.info("update_atm_pressure_from_elevation")
         # constants
         sea_level_p0 = self.cfg.sea_level_p0  # sea-level standard pressure [Pa]
         T0 = self.cfg.sea_level_T0  # sea-level standard temperature [K]
@@ -910,7 +915,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain and da are both either scalar or grid.
         -------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_p_integral")
+        #logger.info("update_p_integral")
         volume = np.double(self.P * self.da_m2 * self.dt)  # [m^3 in the unit of self.dt]
         self.vol_P += np.sum(volume)
 
@@ -920,7 +925,7 @@ class BmiTopoflowGlacier(BmiBase):
         Must use "fill()" to preserve reference.
         -------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_p_max")
+        #logger.info("update_p_max")
         self.P_max.fill(np.maximum(self.P_max, self.P.max()))
 
     def update_P_rain(self):
@@ -930,7 +935,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain is used by channel_base.update_R.
         -------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_p_rain")
+        #logger.info("update_p_rain")
         P_rain = self.P * (self.T_air > self.T_rain_snow)
 
         if np.ndim(self.P_rain) == 0:
@@ -950,7 +955,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_snow is used by snow_base.update_depth.
         -------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_p_snow")
+        #logger.info("update_p_snow")
         self.P_snow = self.P * (self.T_air <= self.T_rain_snow)
 
     def update_P_rain_integral(self):
@@ -960,7 +965,7 @@ class BmiTopoflowGlacier(BmiBase):
         P_rain and da are both either scalar or grid.
         ------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_p_rain_integeral")
+        #logger.info("update_p_rain_integeral")
         volume = np.double(self.P_rain * self.da_m2 * self.dt)  # [m^3]
         self.vol_PR += np.sum(volume)
 
@@ -971,7 +976,7 @@ class BmiTopoflowGlacier(BmiBase):
         # P_snow and da are both either scalar or grid.
         # ------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_p_snow_integeral")
+        #logger.info("update_p_snow_integeral")
         volume = np.double(self.P_snow * self.da_m2 * self.dt)  # [m^3]
         self.vol_PS += np.sum(volume)
 
@@ -989,7 +994,7 @@ class BmiTopoflowGlacier(BmiBase):
                with the stability criterion also given there.
         ---------------------------------------------------------------
         """
-        LOG.debug("update_bulk_richardson_number")
+        #logger.info("update_bulk_richardson_number")
         top = self.g * self.z * (self.T_air - self.T_surf)
         bot = (self.uz) ** 2.0 * (self.T_air + np.float64(273.15))
         bot = np.asarray(bot, dtype="float64")
@@ -1019,7 +1024,7 @@ class BmiTopoflowGlacier(BmiBase):
           z, h_snow, z0_air, or uz is a grid.
         -----------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_bulk_aero_conductance")
+        #logger.info("update_bulk_aero_conductance")
         h_snow = self.h_snow  # (ref from new framework)
 
         # Guard against non-positive argument to log
@@ -1101,7 +1106,7 @@ class BmiTopoflowGlacier(BmiBase):
         Compute sensible heat flux
         -----------------------------
         """  # noqa: D205
-        LOG.debug("update_sensible_heat_flux")
+        #logger.info("update_sensible_heat_flux")
         delta_T = self.T_air - self.T_surf
         self.Qh = (self.cfg.rho_air * self.cfg.Cp_air) * self.Dh * delta_T
 
@@ -1131,7 +1136,7 @@ class BmiTopoflowGlacier(BmiBase):
         #       correctly, then there is no need to recompute e_sat.
         # ----------------------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_saturation_vapor_pressure")
+        #logger.info("update_saturation_vapor_pressure")
         if SURFACE:
             #             HAVE_VAR   = hasattr(self, 'e_sat_surf'))
             #             T_CONSTANT = (self.T_surf_type in ['Scalar', 'Grid'])
@@ -1176,7 +1181,7 @@ class BmiTopoflowGlacier(BmiBase):
         :param MBAR: converts to mbar
         :return: None
         """
-        LOG.debug("update_vapor_pressure_from_spHum_AirPre")
+        #logger.info("update_vapor_pressure_from_spHum_AirPre")
         e = self.Hum_sp * self.P_air / (self.cfg.eps + ((1 - self.cfg.eps) * self.Hum_sp))
         e = e / np.float64(1000)  # [kPa]
 
@@ -1195,7 +1200,7 @@ class BmiTopoflowGlacier(BmiBase):
         :param SURFACE: False or True
         :return: None
         """
-        LOG.debug("update_RH")
+        #logger.info("update_RH")
         if SURFACE:
             self.RH = self.e_surf / self.e_sat_surf
         else:
@@ -1208,7 +1213,7 @@ class BmiTopoflowGlacier(BmiBase):
         #        e has units of kPa.
         # ---------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_vapor_pressure")
+        #logger.info("update_vapor_pressure")
         if SURFACE:
             e_sat = self.e_sat_surf
         else:
@@ -1274,7 +1279,7 @@ class BmiTopoflowGlacier(BmiBase):
         # If snow and/or ice are present,  T_surf cannot
         # exceed 0 deg C
         # -------------------------------------------------
-        LOG.debug("update_T_surf")
+        #logger.info("update_T_surf")
         T_surf = np.where(
             ((self.h_snow > 0) | (self.h_ice > 0)),  # where snow or ice exists
             np.minimum(self.T_dew, np.float64(0)),  # T_surf is either T_dew or 0, whichever is lower
@@ -1288,7 +1293,7 @@ class BmiTopoflowGlacier(BmiBase):
         #         which depends on air temp and relative humidity.
         # ------------------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_precipitable_water_content")
+        #logger.info("update_precipitable_water_content")
         arg = np.float64(0.0614 * self.T_dew)
         self.W_p = np.float64(1.12) * np.exp(arg)  # [cm]
 
@@ -1301,7 +1306,7 @@ class BmiTopoflowGlacier(BmiBase):
         # be 0.622 instead of 0.662 (Zhang et al., 2000).
         # --------------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_latent_heat_flux")
+        #logger.info("update_latent_heat_flux")
         const = self.cfg.latent_heat_constant
         factor = self.cfg.rho_air * self.cfg.Lv * self.De
         delta_e = self.e_air - self.e_surf
@@ -1319,7 +1324,7 @@ class BmiTopoflowGlacier(BmiBase):
         #        All the Q's have units of W/m^2 = J/(m^2 s).
         # -----------------------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_conduction_heat_flux")
+        #logger.info("update_conduction_heat_flux")
         pass  # Method not implemented in Topoflow: https://github.com/NOAA-OWP/topoflow/blob/db4d5877a32455beebe78edf5abe8d91df128665/topoflow/components/met_base.py#L1905
 
     def update_advection_heat_flux(self):
@@ -1327,7 +1332,7 @@ class BmiTopoflowGlacier(BmiBase):
         #        All the Q's have units of W/m^2 = J/(m^2 s).
         # ------------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_advection_heat_flux")
+        #logger.info("update_advection_heat_flux")
         pass  # Method not implemented in Topoflow: https://github.com/NOAA-OWP/topoflow/blob/db4d5877a32455beebe78edf5abe8d91df128665/topoflow/components/met_base.py#L1925
 
     def update_julian_day(self, time_units="seconds"):
@@ -1337,7 +1342,7 @@ class BmiTopoflowGlacier(BmiBase):
         Full solar geometry (True Solar Noon etc.) is computed only if
         self._skip_solar_geometry is False (i.e., when we *must* synthesize SW).
         """
-        LOG.debug("update_julian_day")
+        # logger.info("update_julian_day")
         # -------------------------------------------------------
         # Compute the current datetime from start + offset
         # -------------------------------------------------------
@@ -1395,7 +1400,7 @@ class BmiTopoflowGlacier(BmiBase):
         0 deg C, 0.12 for temperatures > 0 deg C
         ------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_albedo")
+        #logger.info("update_albedo")
         if method == "aging":
             albedo = self.albedo
 
@@ -1487,7 +1492,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         w_bad = np.logical_or(beta < 0, beta > (np.pi / 2))
         if np.any(w_bad):
-            LOG.error("Some slope angles are out of range. Not updating beta for those cells.")
+            logger.error("ERROR: Some slope angles are out of range. Not updating beta for those cells.")
             beta = np.where(w_bad, np.float64(0), beta)
 
         self.beta = beta
@@ -1499,7 +1504,7 @@ class BmiTopoflowGlacier(BmiBase):
         # Compute Qn_SW for this time
         # --------------------------------
         """
-        LOG.debug("update_net_shortwave_radiation")
+        #logger.info("update_net_shortwave_radiation")
         # Fast path: if SW_in (forcing) is available, use it directly.
         # Units are W m-2 and net shortwave = Kin * (1 - albedo) (Dingman 2015, Eq. 6B1.1)
         try:
@@ -1597,7 +1602,7 @@ class BmiTopoflowGlacier(BmiBase):
              But it reduces to other formulas as it should.
         ---------------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_em_air")
+        #logger.info("update_em_air")
         T_air_K = self.T_air + self.C_to_K
 
         if not (self.cfg.SATTERLUND):
@@ -1662,7 +1667,7 @@ class BmiTopoflowGlacier(BmiBase):
         Compute Qn_LW for this time
         --------------------------------
         """
-        LOG.debug("update_net_longwave_radiation")
+        #logger.info("update_net_longwave_radiation")
         T_surf_K = self.T_surf + self.C_to_K
         T_air_K  = self.T_air  + self.C_to_K
 
@@ -1792,7 +1797,7 @@ class BmiTopoflowGlacier(BmiBase):
                dt       = snowmelt timestep [seconds]
         ----------------------------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_net_energy_flux")
+        #logger.info("update_net_energy_flux")
         Q_sum = self.Qn_SW + self.Qn_LW + self.Qh + self.Qe + self.Qa + self.Qc  # [W m-2]
 
         if np.ndim(self.Q_sum) == 0:
@@ -1843,7 +1848,7 @@ class BmiTopoflowGlacier(BmiBase):
         # E_rem = energy remaining in excess of Eccs
         # -----------------------------------------------
         """  # noqa: D205
-        LOG.debug("update_snow_meltrate")
+        #logger.info("update_snow_meltrate")
         E_in = self.Q_sum * self.dt
         E_rem = np.maximum(E_in - self.Eccs, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
@@ -2318,13 +2323,13 @@ class BmiTopoflowGlacier(BmiBase):
 
     def get_input_var_names(self) -> list[str]:
         """Return BMI input variable names that NGen can set."""
-        LOG.debug("get_input_var_names")
+        # logger.info("get_input_var_names")
         # The Context you build from _dynamic_input_vars already has the names.
         return list(self._dynamic_inputs.names())
 
     def get_output_var_names(self) -> list[str]:
         """Return BMI output variable names that NGen can read."""
-        LOG.debug("get_output_var_names")
+        # logger.info("get_output_var_names")
         return list(self._outputs.names())
 
     def get_value(self, name: str, dest) -> None:
@@ -2519,13 +2524,13 @@ class BmiTopoflowGlacier(BmiBase):
         except Exception:
             return
         if (h_swe0 <= 0.0) and (h_snow0 <= 0.0) and (h_iwe0 <= 0.0) and (h_ice0 <= 0.0):
-            LOG.warning(
+            logger.warning(
                 "Initial SWE/ice are all zero (h0_swe=h0_snow=h0_iwe=h0_ice=0). "
                 "Without rainfall in forcing, discharge will remain 0."
             )
 
     def get_value_at_indices(self, name: str, dest: np.ndarray, inds: np.ndarray) -> np.ndarray:
-        LOG.debug(f"get_value_at_indices: {name}")
+        logger.debug(f"get_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
         if hasattr(self, "_outputs") and name in self._outputs:
             return self._outputs.value_at_indices(name, dest, a_inds)
@@ -2534,7 +2539,7 @@ class BmiTopoflowGlacier(BmiBase):
         raise KeyError(f"Variable not found: {name}")
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray) -> None:
-        LOG.debug(f"set_value_at_indices: {name}")
+        logger.debug(f"set_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
         a_src = np.asarray(src)
         if hasattr(self, "_inputs") and name in self._inputs:
