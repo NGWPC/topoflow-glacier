@@ -32,6 +32,7 @@ class Context:
     def __init__(self, vars: Iterable[Var]):
         """Initialization Function"""
         self._name_mapping: dict[str, Var] = {var.name: var for var in vars}
+        configure_logging()
 
     def unit(self, name: str) -> str:
         """Given a variable name, return its unit"""

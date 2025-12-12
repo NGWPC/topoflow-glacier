@@ -314,7 +314,7 @@ class BmiTopoflowGlacier(BmiBase):
         self._outputs.set_value("atmosphere_bottom_air_water-vapor__relative_saturation", value)
 
     def initialize(self, config_file: str | Path) -> None:
-        """Initialize the BMI model and pre-compute all bookkeeping needed by the adapter."""
+        """Initialize the BMI model and pre-compute all bookkeeping needed by the adapter."""'
         LOG.info("initialize")
 
         # --- load config (YAML -> TopoflowGlacierConfig) ---
