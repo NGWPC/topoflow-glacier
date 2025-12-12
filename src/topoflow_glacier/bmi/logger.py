@@ -142,8 +142,7 @@ def configure_logging():
 
     Arguments
     ---------
-    logging._Level: Log level
-    ** Not used in NGWPC version. Instead the ngen logger defines environment variables that are read
+    none
 
     Returns
     -------
@@ -163,9 +162,8 @@ def configure_logging():
     See also https://docs.python.org/3/library/logging.html
 
     """
-    # Use a named logger because Forcing is handled differently
-    # than other BMI modules in ngen. This ensures the entries
-    # are identified as FORCING and not NGEN in the log.
+    # Use a named logger to ensure entries are identified as this
+    # MODULE_NAME and are not miss-identfied in the ngen log.
     logger = logging.getLogger(MODULE_NAME)
     if getattr(logger, "_initialized", False):
         return  # logger already initialized, nothing else to do
