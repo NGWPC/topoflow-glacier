@@ -5,7 +5,7 @@ from collections.abc import Iterable, Iterator
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 
-from topoflow_glacier.log_level_set import log_level_set, MODULE_NAME
+from topoflow_glacier.log_level_set import MODULE_NAME
 import logging
 LOG = logging.getLogger(MODULE_NAME)
 
@@ -32,7 +32,6 @@ class Context:
     def __init__(self, vars: Iterable[Var]):
         """Initialization Function"""
         self._name_mapping: dict[str, Var] = {var.name: var for var in vars}
-        log_level_set()
 
     def unit(self, name: str) -> str:
         """Given a variable name, return its unit"""

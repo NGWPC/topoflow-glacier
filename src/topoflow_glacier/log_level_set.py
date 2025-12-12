@@ -1,4 +1,3 @@
-from __future__ import annotations
 import logging
 import sys   
 from datetime import datetime, timezone
@@ -109,13 +108,13 @@ def get_log_file_path():
                 logFile = open(logFilePath, "w")
             if (moduleLogEnvExists == False):
                 os.environ[EV_MODULE_LOGFILEPATH] = logFilePath
+                print(f"Module {MODULE_NAME} Log File: {logFilePath}")
         else:
             raise IOError
     except:
         print(f"Unable to open log file for {MODULE_NAME}: {logFilePath}")
         print(f"Log entries will be writen to stdout")
  
-    print(f"Module {MODULE_NAME} Log File: {logFilePath}")
     return logFilePath, appendEntries
      
 def get_log_level() -> str:
