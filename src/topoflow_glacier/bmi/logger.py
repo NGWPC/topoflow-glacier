@@ -81,8 +81,10 @@ def get_log_file_path():
     else:
         ngenEnvVar = os.getenv(EV_NGEN_LOGFILEPATH, "")
         if ngenEnvVar:
+            print(f"Module {MODULE_NAME} Env var {EV_NGEN_LOGFILEPATH} found.")
             logFilePath = ngenEnvVar
         else:
+            print(f"Module {MODULE_NAME} Env var {EV_NGEN_LOGFILEPATH} not found. Creating default log name.")
             appendEntries = False
             if os.path.isdir(LOG_DIR_NGENCERF):
                 logFileDir = LOG_DIR_NGENCERF + DS + LOG_DIR_DEFAULT
@@ -115,9 +117,8 @@ def get_log_file_path():
         else:
             raise IOError
     except:
-        print(f"Unable to open log file for {MODULE_NAME}: {logFilePath}", flush=True)
-        print("Log entries will be writen to stdout", flush=True)
-    print(logFilePath)
+        print(f"Module {MODULE_NAME} Unable to open log file: {logFilePath}", flush=True)
+        print(f"Module {MODULE_NAME} Log entries will be writen to stdout", flush=True)
 
     return logFilePath, appendEntries
      
@@ -173,6 +174,8 @@ def configure_logging():
     if moduleEnvVar:
         if (moduleEnvVar == "DISABLED"):
             loggingEnabled = False
+    else:
+        print(f"Module {MODULE_NAME} Env var {EV_EWTS_LOGGING} not found. Using logging defaults.")
  
     if (loggingEnabled == False):
         print(f"Module {MODULE_NAME} Logging DISABLED")
@@ -187,6 +190,7 @@ def configure_logging():
             openMode = 'a' if appendEntries else 'w'
             handler = logging.FileHandler(logFilePath, mode=openMode)
         else:
+            print(f"Module {MODULE_NAME} Env var {EV_EWTS_LOGGING} not found. Using stdout.")
             handler = logging.StreamHandler(sys.stdout)
  
         # Get the log level from env var or a default
