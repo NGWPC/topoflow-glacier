@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 import getpass
 import logging
 import os
@@ -164,6 +165,9 @@ def configure_logging():
     See also https://docs.python.org/3/library/logging.html
 
     """
+    
+    traceback.print_stack()
+
     # Use a named logger to ensure entries are identified as this
     # MODULE_NAME and are not miss-identfied in the ngen log.
     logger = logging.getLogger(MODULE_NAME)

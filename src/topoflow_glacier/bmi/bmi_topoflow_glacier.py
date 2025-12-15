@@ -137,6 +137,7 @@ class BmiTopoflowGlacier(BmiBase):
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
         self._timestep: int = 0
+        print(f"[DEBUG] Calling configure_logger from bmi_topoflow_glacier.py")
         configure_logging()
 
         # Internal wind state (components + derived magnitude)
