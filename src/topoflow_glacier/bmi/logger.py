@@ -76,12 +76,13 @@ def get_log_file_path():
     moduleLogEnvExists = False
     moduleEnvVar = os.getenv(EV_MODULE_LOGFILEPATH, "")
     if moduleEnvVar:
+        print(f"[DEBUG] Module {EV_MODULE_LOGFILEPATH} already set. Appending to {moduleEnvVar}.")
         logFilePath = moduleEnvVar
         moduleLogEnvExists = True
     else:
         ngenEnvVar = os.getenv(EV_NGEN_LOGFILEPATH, "")
         if ngenEnvVar:
-            print(f"Module {MODULE_NAME} Env var {EV_NGEN_LOGFILEPATH} found.")
+            print(f"[DEBUG] Module {MODULE_NAME} Env var {EV_NGEN_LOGFILEPATH} found.")
             logFilePath = ngenEnvVar
         else:
             print(f"Module {MODULE_NAME} Env var {EV_NGEN_LOGFILEPATH} not found. Creating default log name.")
@@ -167,6 +168,7 @@ def configure_logging():
     # MODULE_NAME and are not miss-identfied in the ngen log.
     logger = logging.getLogger(MODULE_NAME)
     if getattr(logger, "_initialized", False):
+        print(f"[DEBUG] Module {MODULE_NAME} named logger already initialized. Nothing more to do.")
         return  # logger already initialized, nothing else to do
 
     loggingEnabled = True
@@ -190,7 +192,7 @@ def configure_logging():
             openMode = 'a' if appendEntries else 'w'
             handler = logging.FileHandler(logFilePath, mode=openMode)
         else:
-            print(f"Module {MODULE_NAME} Env var {EV_EWTS_LOGGING} not found. Using stdout.")
+            print(f"Module {MODULE_NAME} unable to create log file. Using stdout.")
             handler = logging.StreamHandler(sys.stdout)
  
         # Get the log level from env var or a default
