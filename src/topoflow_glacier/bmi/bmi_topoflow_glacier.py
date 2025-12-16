@@ -9,14 +9,16 @@ import sys
 import gs
 from numpy.typing import NDArray
 
-from topoflow_glacier.bmi.bmi_base import BmiBase
-from topoflow_glacier.bmi.config import TopoflowGlacierConfig
 from topoflow_glacier.bmi.logger import configure_logging, MODULE_NAME
-from topoflow_glacier.physics import solar_funcs as solar
-from topoflow_glacier.physics.context import Context, build_context
+configure_logging()
 
 import logging
 LOG = logging.getLogger(MODULE_NAME)
+
+from topoflow_glacier.bmi.bmi_base import BmiBase
+from topoflow_glacier.bmi.config import TopoflowGlacierConfig
+from topoflow_glacier.physics import solar_funcs as solar
+from topoflow_glacier.physics.context import Context, build_context
 
 __all__ = ["BmiTopoflowGlacier"]
 
@@ -136,33 +138,6 @@ class BmiTopoflowGlacier(BmiBase):
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
-        self._timestep: int = 0
-        print("=== TOPOFLOW-GLACIER DEBUG LOGGER INIT ===")
-        print("module:", __name__)
-        print("file:", __file__)
-        print("pid:", os.getpid())
-        print("EV_NGEN_LOGFILEPATH env:", os.getenv("EV_NGEN_LOGFILEPATH"))
-        print("handlers before:", logging.getLogger().handlers)
-        print("sys.modules keys contain module:",
-            [k for k in sys.modules if k.endswith(__name__)])
-        print("=========================")
-
-        configure_logging()
-        print("=== TOPOFLOW-GLACIER INIT COMPLETE ===")
-        print("module:", __name__)
-        print("file:", __file__)
-        print("pid:", os.getpid())
-        print("EV_NGEN_LOGFILEPATH env:", os.getenv("EV_NGEN_LOGFILEPATH"))
-        print("EV_MODULE_LOGFILEPATH env:", os.getenv("EV_MODULE_LOGFILEPATH"))
-        print("handlers after:", logging.getLogger().handlers)
-        print("sys.modules keys contain module:",
-            [k for k in sys.modules if k.endswith(__name__)])
-        print("=========================")
-
-        # Internal wind state (components + derived magnitude)
-        self._wind_u: float = 0.0     # m s-1
-        self._wind_v: float = 0.0     # m s-1
-        self._wind_speed: float = 0.0  # m s-1 (derived)
 
     @property
     def P(self) -> np.ndarray:
