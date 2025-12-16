@@ -120,8 +120,7 @@ import numpy as np
 import pandas as pd
 from timezonefinder import TimezoneFinder
 from topoflow_glacier.bmi.logger import configure_logging, MODULE_NAME
-print(f"[DEBUG] Calling configure_logger from physics/solar_funcs.py")
-configure_logging()
+configure_logging() # returns immediately if logger already initialized
 
 import logging
 LOG = logging.getLogger(MODULE_NAME)
