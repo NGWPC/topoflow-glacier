@@ -484,6 +484,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         # --- time-step index ---
         self._timestep = 0
+        self._t_index = 0
 
         # optionally skip expensive solar geometry if SW forcing exists
         self._skip_solar_geometry = True
@@ -561,9 +562,8 @@ class BmiTopoflowGlacier(BmiBase):
             self.update_combined_meltrate()
 
         # advance index AFTER computing step diagnostics
-        self._timestep = int(getattr(self, "_timestep", 0)) + 1
-        if hasattr(self, "_t_index"):
-            self._t_index = int(getattr(self, "_t_index", 0)) + 1
+        self._timestep += 1
+        self._t_index += 1
 
         # best-effort debug line for one-cell runs
         try:
@@ -808,8 +808,8 @@ class BmiTopoflowGlacier(BmiBase):
     def get_current_time(self) -> float:
         """Current model time in seconds since start, based on internal step index."""
         dt = float(self.get_time_step())
-        t = float(getattr(self, "_t_index", 0)) * dt
-        LOG.debug(f"get_current_time: t_index={getattr(self, '_t_index', 0)}, t={t}")
+        t = float(self._t_index) * dt
+        LOG.debug(f"get_current_time: t_index={self._t_index}, t={t}")
         return t
 
     def is_at_end_time(self) -> bool:
