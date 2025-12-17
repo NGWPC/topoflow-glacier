@@ -614,11 +614,12 @@ class BmiTopoflowGlacier(BmiBase):
             # This mainly helps with memory and keeps GC simple.
             attrs_to_clear = [
                 "_dynamic_inputs",
+                "_calibs",
                 "_outputs",
                 "cfg",
                 "slopes",
                 "P_snow_3day_watershed",
-                "T_surf", "RH", "p0", "z",
+                "T_rain_snow", "T_surf", "RH", "p0", "z",
                 "cloud_factor", "canopy_factor",
                 "P_rain", "P_snow",
                 "e_air", "e_surf",
