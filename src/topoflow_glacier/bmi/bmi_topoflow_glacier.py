@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import yaml
 import sys
-import gs
+import gc
 from numpy.typing import NDArray
 
 from topoflow_glacier.bmi.logger import configure_logging, MODULE_NAME
