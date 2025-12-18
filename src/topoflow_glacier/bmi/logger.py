@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import traceback
 import getpass
 import logging
 import os
@@ -77,13 +76,11 @@ def get_log_file_path():
     moduleLogEnvExists = False
     moduleEnvVar = os.getenv(EV_MODULE_LOGFILEPATH, "")
     if moduleEnvVar:
-        print(f"[DEBUG] Module {EV_MODULE_LOGFILEPATH} already set. Appending to {moduleEnvVar}.")
         logFilePath = moduleEnvVar
         moduleLogEnvExists = True
     else:
         ngenEnvVar = os.getenv(EV_NGEN_LOGFILEPATH, "")
         if ngenEnvVar:
-            print(f"[DEBUG] Module {MODULE_NAME} Env var {EV_NGEN_LOGFILEPATH} found.")
             logFilePath = ngenEnvVar
         else:
             print(f"Module {MODULE_NAME} Env var {EV_NGEN_LOGFILEPATH} not found. Creating default log name.")
@@ -178,13 +175,10 @@ def configure_logging():
 
     """
     
-    traceback.print_stack()
-
     # Use a named logger to ensure entries are identified as this
     # MODULE_NAME and are not miss-identfied in the ngen log.
     logger = logging.getLogger(MODULE_NAME)
     if getattr(logger, "_initialized", False):
-        print(f"[DEBUG] Module {MODULE_NAME} named logger already initialized. Nothing more to do.")
         return  # logger already initialized, nothing else to do
 
     loggingEnabled = True
