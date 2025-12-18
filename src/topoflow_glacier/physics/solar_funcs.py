@@ -119,8 +119,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 from timezonefinder import TimezoneFinder
-from topoflow_glacier.bmi.logger import configure_logging, MODULE_NAME
-configure_logging() # returns immediately if logger already initialized
+from topoflow_glacier.bmi.logger import MODULE_NAME
 
 import logging
 LOG = logging.getLogger(MODULE_NAME)

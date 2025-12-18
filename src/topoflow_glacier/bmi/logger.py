@@ -138,7 +138,19 @@ def translate_ngwpc_log_level(ngwpc_log_level: str) -> str:
     elif (ll == "FATAL"):
         return "CRITICAL"
     return ll
- 
+
+def force_info(handler, logger, msg, *args):
+    record = logger.makeRecord(
+        logger.name,
+        logging.INFO,
+        __file__,
+        0,
+        msg,
+        args,
+        None,
+    )
+    handler.emit(record)
+
 def configure_logging():
     """
     Set logging level and specify logger configuration based on environment variables set by ngen
@@ -185,7 +197,7 @@ def configure_logging():
  
     if (loggingEnabled == False):
         print(f"Module {MODULE_NAME} Logging DISABLED")
-        logging.disable(logging.CRITICAL)  # Disables all logs at CRITICAL and below (i.e., everything)
+        logger.disabled = True  # Disables all logs at CRITICAL and below (i.e., everything)
     else:
         print(f"Module {MODULE_NAME} Logging ENABLED")
  
@@ -217,18 +229,8 @@ def configure_logging():
         logger.setLevel(translate_ngwpc_log_level(log_level))
         logger.addHandler(handler)
  
-        # Save the current log level
-        current_level = logger.getEffectiveLevel()
- 
-        try:
-            # Temporarily set log level to INFO
-            logger.setLevel(logging.INFO)
-             
-            # Log the message at INFO level
-            logger.info(f"Log level set to {log_level}")
-            print(f"Module {MODULE_NAME} Log Level set to {log_level}")
-        finally:
-            # Restore the original log level
-            logger.setLevel(current_level)
+        # Write log level INFO message to log regradless of the actual log level
+        force_info(handler, logger, "Log level set to %s", log_level)
+        print(f"Module {MODULE_NAME} Log Level set to {log_level}")
 
-        logger._initialized = True
+    logger._initialized = True

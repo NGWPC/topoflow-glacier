@@ -10,7 +10,6 @@ import gc
 from numpy.typing import NDArray
 
 from topoflow_glacier.bmi.logger import configure_logging, MODULE_NAME
-configure_logging()
 
 import logging
 LOG = logging.getLogger(MODULE_NAME)
@@ -138,6 +137,9 @@ class BmiTopoflowGlacier(BmiBase):
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
+
+        # Configure logger
+        configure_logging()
 
     @property
     def P(self) -> np.ndarray:
