@@ -528,22 +528,24 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_P_snow()
         self.update_P_rain_integral()
         self.update_P_snow_integral()
-        self.update_saturation_vapor_pressure()
-        self.update_vapor_pressure_from_spHum_AirPre()
+        self.update_saturation_vapor_pressure(MBAR=True)
+        self.update_vapor_pressure_from_spHum_AirPre(MBAR=True)
         self.update_RH()
         self.update_dew_point()
         self.update_T_surf()
-        self.update_saturation_vapor_pressure()
+        self.update_saturation_vapor_pressure(MBAR=True, SURFACE=True)
         self.update_bulk_richardson_number()
         self.update_bulk_aero_conductance()
         self.update_sensible_heat_flux()
         self.update_precipitable_water_content()
-        self.update_vapor_pressure()
+        self.update_vapor_pressure(SURFACE=True)
         self.update_latent_heat_flux()
         self.update_conduction_heat_flux()
         self.update_advection_heat_flux()
-        self.update_julian_day()
-        self.update_albedo()
+        self.update_julian_day()  # Run using seconds
+        self.update_albedo(method="aging")
+        self.set_aspect_angle()
+        self.set_slope_angle()
         self.update_net_shortwave_radiation()
         self.update_em_air()
         self.update_net_longwave_radiation()
@@ -552,16 +554,23 @@ class BmiTopoflowGlacier(BmiBase):
         # -------------------------
         # Snow & Ice melt
         # -------------------------
-        self.update_snow_meltrate()
+        self.extract_previous_swe()
+        self.extract_previous_snow_depth()
+        self.update_snow_meltrate()  # (meltrate = SM)
+        self.enforce_max_snow_meltrate()  # (before SM integral!)
+        self.update_SM_integral()
+        self.update_swe()
+        self.update_snowfall_cold_content()
         self.update_ice_meltrate()
-
-        # optional limiters and combined melt
-        if hasattr(self, "enforce_max_snow_meltrate"):
-            self.enforce_max_snow_meltrate()
-        if hasattr(self, "enforce_max_ice_meltrate"):
-            self.enforce_max_ice_meltrate()
-        if hasattr(self, "update_combined_meltrate"):
-            self.update_combined_meltrate()
+        self.enforce_max_ice_meltrate()
+        self.update_IM_integral()
+        self.update_iwe()  # relies on previous timestep's swe value
+        self.update_combined_meltrate()
+        self.update_ws_density_ratio()
+        self.update_snow_depth()  
+        self.update_wi_density_ratio()
+        self.update_ice_depth()
+        self.update_snowpack_cold_content()
 
         # advance index AFTER computing step diagnostics
         self._timestep += 1
@@ -1501,7 +1510,6 @@ class BmiTopoflowGlacier(BmiBase):
         # Fast path: if SW_in (forcing) is available, use it directly.
         # Units are W m-2 and net shortwave = Kin * (1 - albedo) (Dingman 2015, Eq. 6B1.1)
         try:
-            # print(f"SW_in={self.SW_in}")
             SW_in = np.asarray(self.SW_in, dtype="float64")
         except Exception:
             SW_in = None
@@ -1845,8 +1853,7 @@ class BmiTopoflowGlacier(BmiBase):
         E_in = self.Q_sum * self.dt
         E_rem = np.maximum(E_in - self.Eccs, np.float64(0))
         Qm = E_rem / self.dt  # [W m-2]
-
-        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]   # TODO: I guess it is m/hour
+        M = Qm / (self.rho_H2O * self.Lf)  # [m/s]
         if np.size(self.SM) == 1:
             M = np.float64(M)  # avoid type change
             self.SM.fill(M)
@@ -2008,14 +2015,14 @@ class BmiTopoflowGlacier(BmiBase):
         """Update mass total for SM, sum over all pixels
         # ------------------------------------------------
         """  # noqa: D205
-        volume = np.float64(self.SM * self.da_m2 * self.dt * 3600)  # [m^3]
+        volume = np.float64(self.SM * self.da_m2 * self.dt)  # [m^3]
         self.vol_SM += np.sum(volume)  #### np.sum vs. sum ???
 
     def update_IM_integral(self):
         """Update mass total for IM, sum over all pixels
         # ------------------------------------------------
         """  # noqa: D205
-        volume = np.float64(self.IM * self.da_m2 * self.dt * 3600)
+        volume = np.float64(self.IM * self.da_m2 * self.dt)
         self.vol_IM += np.sum(volume)
 
     def update_snowfall_cold_content(self):
@@ -2126,7 +2133,7 @@ class BmiTopoflowGlacier(BmiBase):
         SM_one_hour = self.SM * 3600
         np.minimum(SM_one_hour, self.h_swe, out=SM_one_hour)  # SM cannot be more than h_swe
         self.SM = SM_one_hour / 3600
-        dh2_swe = self.SM * self.dt * 3600
+        dh2_swe = self.SM * self.dt
         self.h_swe -= dh2_swe
         np.maximum(self.h_swe, np.float64(0), self.h_swe)  # (in place)
 
@@ -2137,7 +2144,7 @@ class BmiTopoflowGlacier(BmiBase):
         IM_one_hour = self.IM * 3600
         np.minimum(IM_one_hour, self.h_iwe, out=IM_one_hour)  # IM cannot be more than h_iwe
         self.IM = IM_one_hour / 3600
-        dh2_iwe = self.IM * self.dt * 3600
+        dh2_iwe = self.IM * self.dt
         self.h_iwe -= dh2_iwe
         np.maximum(self.h_iwe, np.float64(0), self.h_iwe)  # (in place)
 
@@ -2234,6 +2241,10 @@ class BmiTopoflowGlacier(BmiBase):
         -------------------------------------------
         """  # noqa: D205
         h_snow = self.h_swe * self.ws_density_ratio
+
+        print(f"ws_density_ratio = {self.ws_density_ratio}")
+        print(f"rho_snow = {self.rho_snow}")
+        print(f"expected ratio = {self.rho_H2O / self.rho_snow}")
 
         if np.ndim(self.h_snow) == 0:
             h_snow = np.float64(h_snow)  ### (from 0D array to scalar)
