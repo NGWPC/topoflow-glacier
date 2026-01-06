@@ -53,7 +53,7 @@ def test_ewts_logger_matrix(clean_ewts_env, monkeypatch, capsys, env_value, expe
     else:
         monkeypatch.setenv("NGEN_EWTS_LOGGING", env_value)
 
-    monkeypatch.setenv("TROUTE_LOGLEVEL", level_input)
+    monkeypatch.setenv("TFGLACR_LOGLEVEL", level_input)
 
     # Force logger re-initialization
     logger = logging.getLogger(MODULE_NAME)
