@@ -4,7 +4,7 @@ from collections.abc import Iterable, Iterator
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
-from topoflow_glacier.bmi.logger import MODULE_NAME
+from ewts import MODULE_NAME
 
 import logging
 LOG = logging.getLogger(MODULE_NAME)
