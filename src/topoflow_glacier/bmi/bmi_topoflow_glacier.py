@@ -2242,10 +2242,6 @@ class BmiTopoflowGlacier(BmiBase):
         """  # noqa: D205
         h_snow = self.h_swe * self.ws_density_ratio
 
-        print(f"ws_density_ratio = {self.ws_density_ratio}")
-        print(f"rho_snow = {self.rho_snow}")
-        print(f"expected ratio = {self.rho_H2O / self.rho_snow}")
-
         if np.ndim(self.h_snow) == 0:
             h_snow = np.float64(h_snow)  ### (from 0D array to scalar)
             self.h_snow.fill(h_snow)  ### (mutable scalar)
