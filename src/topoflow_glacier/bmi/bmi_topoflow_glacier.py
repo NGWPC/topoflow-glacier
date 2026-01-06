@@ -47,6 +47,7 @@ _output_vars = [
     ("land_surface_water__runoff_volume_flux", "m s-1"),
     ("land_surface_water__runoff_depth", "m"),
     ("atmosphere_bottom_air_water-vapor__relative_saturation", "-"),
+    ("precipitation_rate", "mm s-1"),
     # NEW: discharge expected by NGen (m3 s-1)
     ("channel_water_x-section__volume_flow_rate", "m3 s-1"),
 ]
@@ -73,6 +74,7 @@ INTERNAL_NAME_CROSSWALK = {
     "channel_water_x-section__volume_flow_rate": "Q_out",
     "land_surface_wind__x_component_of_velocity": "U2D",
     "land_surface_wind__y_component_of_velocity": "V2D",
+    "precipitation_rate": "P_rate",
     # Unused variables:
     # "atmosphere_bottom_air__mass-per-volume_density": "rho_air",
     # "atmosphere_bottom_air__mass-specific_isobaric_heat_capacity": "Cp_air",
@@ -153,6 +155,16 @@ class BmiTopoflowGlacier(BmiBase):
         self._dynamic_inputs.set_value(
             "atmosphere_water__liquid_equivalent_precipitation_rate", value * self.mmph_to_mps
         )
+
+    @property
+    def P_rate(self) -> np.ndarray:
+        """Getter for the precipitation output variable in mm s-1"""
+        return self._outputs.value("precipitation_rate")
+
+    @P.setter
+    def P(self, value: np.ndarray) -> None:
+        """Setter for the precipitation output variable in mm s-1"""
+        self._outputs.set_value("precipitation_rate", value)
 
     @property
     def T_air(self) -> np.ndarray:
@@ -407,6 +419,7 @@ class BmiTopoflowGlacier(BmiBase):
         self._outputs.set_value("snowpack__liquid-equivalent_depth", np.array([self.cfg.h0_swe], dtype="float64"))
         self._outputs.set_value("glacier__liquid_equivalent_depth", np.array([self.cfg.h0_iwe], dtype="float64"))
         self._outputs.set_value("channel_water_x-section__volume_flow_rate", np.array([0.0], dtype="float64"))
+        self._outputs.set_value("precipitation_rate", np.array([0.0], dtype="float64"))
 
         # melt-volume accumulators
         self.vol_SM = np.array([0.0], dtype="float64")
@@ -920,6 +933,8 @@ class BmiTopoflowGlacier(BmiBase):
         LOG.debug("update_p_integral")
         volume = np.double(self.P * self.da_m2 * self.dt)  # [m^3 in the unit of self.dt]
         self.vol_P += np.sum(volume)
+        P_output_mms = self.P * 1000.0  # [m s-1] -> [mm s-1] 
+        self._outputs.set_value("precipitation_rate", P_output_mms)
 
     def update_P_max(self):
         """Save the maximum precip. rate in [m/s]
@@ -2669,7 +2684,7 @@ class BmiTopoflowGlacier(BmiBase):
             "glacier_ice__thickness": "m",
             "snowpack__liquid-equivalent_depth": "m",
             "glacier__liquid_equivalent_depth": "m",
-
+            "precipitation_rate": "mm s-1",
             "channel_water_x-section__volume_flow_rate": "m3 s-1",
         }
         try:
