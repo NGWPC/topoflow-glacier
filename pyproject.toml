@@ -9,6 +9,7 @@ build.hooks.vcs.version-file = "src/topoflow_glacier/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = [
   "src/topoflow_glacier",
+  "src/ewts",
   "tools"
 ]
 
