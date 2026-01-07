@@ -1,7 +1,7 @@
 import logging
 import pytest
-from ewts.formatter import CustomFormatter
-from ewts.constants import MODULE_NAME
+from topoflow_glacier_ewts.formatter import CustomFormatter
+from topoflow_glacier_ewts.constants import MODULE_NAME
 
 @pytest.fixture
 def formatter():

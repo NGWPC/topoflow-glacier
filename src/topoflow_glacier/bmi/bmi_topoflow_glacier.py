@@ -9,7 +9,7 @@ import sys
 import gc
 from numpy.typing import NDArray
 
-from ewts import configure_logging, MODULE_NAME
+from topoflow_glacier_ewts import configure_logging, MODULE_NAME
 
 import logging
 LOG = logging.getLogger(MODULE_NAME)
