@@ -34,12 +34,12 @@ maintainers = [
 
 dependencies = [
   "bmipy==2.0.1",
-  "matplotlib==3.10.6",
+  "matplotlib~=3.10.6",
   "numpy==1.26.4",
-  "pandas==2.3.1",
-  "pydantic==2.11.4",
+  "pandas~=2.3.3",
+  "pydantic~=2.11.9",
   "pyprojroot==0.3.0",
-  "python-dotenv==1.1.0",
+  "python-dotenv~=1.2.1",
   "pyyaml==6.0.3",
   "timezonefinder>=8.0.0",
   "gs==1.1.1",
