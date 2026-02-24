@@ -1101,7 +1101,7 @@ class BmiTopoflowGlacier(BmiBase):
             # --------------------------------
             # Works if Dh is grid or scalar
             # --------------------------------
-            Ri_scalar = float(Ri) if Ri.size == 1 else float(self.Ri)
+            Ri_scalar = float(Ri)
             if Ri_scalar > 0:
                 Dh = Dh / (np.float64(1) + (np.float64(10) * Ri_scalar))
             else:
@@ -1278,8 +1278,9 @@ class BmiTopoflowGlacier(BmiBase):
         # d = 234.5    # [deg C]
         # Floor e_air to a tiny positive number to avoid -inf/NaN on first step
         e_air_mbar = np.asarray(self.e_air, dtype="float64")
-        e_air_mbar = np.maximum(e_air_mbar, 1e-9)
         log_term = np.log(e_air_mbar / a)
+        if b == log_term:
+            LOG.critical("Dewpoint calculation failed, (b - log_term) cannot equal 0")
         self.T_dew = c * log_term / (b - log_term)
 
         # log_term = np.log(self.e_air / a)
@@ -1685,20 +1686,8 @@ class BmiTopoflowGlacier(BmiBase):
         """
         LOG.debug("update_net_longwave_radiation")
         T_surf_K = self.T_surf + self.C_to_K
-        T_air_K  = self.T_air  + self.C_to_K
-
-        # Fast path: if LWDOWN is provided in forcing, use it for LW_in.
-        try:
-            LW_in_forced = np.asarray(self.LW_in, dtype="float64")
-        except Exception:
-            LW_in_forced = None
-
-        if LW_in_forced is not None and np.all(np.isfinite(LW_in_forced)):
-            LW_in = LW_in_forced
-        else:
-            # Compute LW_in from emissivity when forcing is not available.
-            LW_in = self.em_air * self.cfg.sigma * (T_air_K) ** 4.0
-
+        T_air_K = self.T_air + self.C_to_K
+        LW_in = self.em_air * self.cfg.sigma * (T_air_K) ** 4.0
         LW_out = self.cfg.em_surf * self.cfg.sigma * (T_surf_K) ** 4.0
 
         # Account for reflection of atmospheric longwave by the surface
@@ -2145,22 +2134,38 @@ class BmiTopoflowGlacier(BmiBase):
         # Decrease snow water equivalent due to melting
         # Note that SM depends partly on h_snow.
         # ------------------------------------------------
-        SM_one_hour = self.SM * 3600
-        np.minimum(SM_one_hour, self.h_swe, out=SM_one_hour)  # SM cannot be more than h_swe
-        self.SM = SM_one_hour / 3600
+        # Compute potential melt depth for this timestep
         dh2_swe = self.SM * self.dt
+
+        # Cap melt to available snow
+        dh2_swe = np.minimum(dh2_swe, self.h_swe)
+
+        # Calculate actual melt rate
+        self.SM = dh2_swe / self.dt
+
+        # Decrease SWE by actual melt
         self.h_swe -= dh2_swe
+
+        # Ensure h_swe is non-negative
         np.maximum(self.h_swe, np.float64(0), self.h_swe)  # (in place)
 
     def update_iwe(self):
         """Decrease ice water equivalent due to melting
         ------------------------------------------------
         """  # noqa: D205
-        IM_one_hour = self.IM * 3600
-        np.minimum(IM_one_hour, self.h_iwe, out=IM_one_hour)  # IM cannot be more than h_iwe
-        self.IM = IM_one_hour / 3600
+        # Compute potential melt depth for this timestep
         dh2_iwe = self.IM * self.dt
+
+        # Cap melt to available ice
+        dh2_iwe = np.minimum(dh2_iwe, self.h_iwe)
+
+        # Calculate actual melt rate
+        self.IM = dh2_iwe / self.dt
+        
+        # Decrease IWE by actual melt
         self.h_iwe -= dh2_iwe
+
+        # Ensure h_iwe is non-negative
         np.maximum(self.h_iwe, np.float64(0), self.h_iwe)  # (in place)
 
     def update_ws_density_ratio(self):
