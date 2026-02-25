@@ -57,9 +57,16 @@ def run_topoflow_glacier(make_plot: bool) -> None:
     output_h_ice = np.zeros(len(precip_data))
     output_m_total = np.zeros(len(precip_data))
 
-    dest_array = np.zeros(1)
-    logger.info(f"|- Starting Snow Height: {model.get_value('snowpack__depth', dest_array).item()}")
-    logger.info(f"|- Starting Ice Height: {model.get_value('glacier_ice__thickness', dest_array).item()}")
+    # dest_array = np.zeros(1)
+    # logger.info(f"|- Starting Snow Height: {model.get_value('snowpack__depth', dest_array).item()}")
+    # logger.info(f"|- Starting Ice Height: {model.get_value('glacier_ice__thickness', dest_array).item()}")
+    dest_array = np.zeros(1, dtype=np.float64)
+
+    model.get_value("snowpack__depth", dest_array)
+    logger.info(f"|- Starting Snow Height: {float(dest_array[0])}")
+
+    model.get_value("glacier_ice__thickness", dest_array)
+    logger.info(f"|- Starting Ice Height: {float(dest_array[0])}")
 
     precip_data[:] = 3.0
     temp_data[:] = 10.0 - model.K_to_C

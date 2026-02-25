@@ -6,9 +6,13 @@ requires = ["hatchling", "hatch-vcs"]
 version.source = "vcs"
 build.hooks.vcs.version-file = "src/topoflow_glacier/_version.py"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = [
   "src/topoflow_glacier",
+  "src/topoflow_glacier_ewts",
   "tools"
 ]
 
@@ -30,14 +34,16 @@ maintainers = [
 
 dependencies = [
   "bmipy==2.0.1",
-  "matplotlib==3.10.6",
-  "numpy==2.3.2",
-  "pandas==2.3.1",
-  "pydantic==2.11.4",
+  "matplotlib~=3.10.6",
+  "numpy==1.26.4",
+  "pandas~=2.3.3",
+  "pydantic~=2.11.9",
   "pyprojroot==0.3.0",
-  "python-dotenv==1.1.0",
+  "python-dotenv~=1.2.1",
   "pyyaml==6.0.3",
   "timezonefinder>=8.0.0",
+  "gs==1.1.1",
+  "topoflow_glacier_ewts @ file:src/topoflow_glacier_ewts",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +51,7 @@ docs = [
   "mkdocs-material==9.6.14",
   "sympy==1.14.0"
 ]
+
 
 dev = [
   "pre-commit==3.8.0",
