@@ -9,10 +9,8 @@ import sys
 import gc
 from numpy.typing import NDArray
 
-from topoflow_glacier_ewts import configure_logging, MODULE_NAME
-
-import logging
-LOG = logging.getLogger(MODULE_NAME)
+import ewts
+LOG = ewts.get_logger(ewts.TOPOFLOW_GLACIER_ID)
 
 from topoflow_glacier.bmi.bmi_base import BmiBase
 from topoflow_glacier.bmi.config import TopoflowGlacierConfig
@@ -140,8 +138,8 @@ class BmiTopoflowGlacier(BmiBase):
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
 
-        # Configure logger
-        configure_logging()
+        # This is required prior to the first log message is issued by t-route.
+        LOG.bind()
 
     @property
     def P(self) -> np.ndarray:

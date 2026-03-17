@@ -4,10 +4,11 @@ from collections.abc import Iterable, Iterator
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
-from topoflow_glacier_ewts import MODULE_NAME
+
 
 import logging
-LOG = logging.getLogger(MODULE_NAME)
+import ewts
+LOG = ewts.get_logger(ewts.TOPOFLOW_GLACIER_ID)
 
 def _ensure(condition: bool, message: str) -> None:
     """

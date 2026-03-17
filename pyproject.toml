@@ -12,7 +12,6 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = [
   "src/topoflow_glacier",
-  "src/topoflow_glacier_ewts",
   "tools"
 ]
 
@@ -43,7 +42,6 @@ dependencies = [
   "pyyaml==6.0.3",
   "timezonefinder>=8.0.0",
   "gs==1.1.1",
-  "topoflow_glacier_ewts @ file:src/topoflow_glacier_ewts",
 ]
 
 [project.optional-dependencies]
