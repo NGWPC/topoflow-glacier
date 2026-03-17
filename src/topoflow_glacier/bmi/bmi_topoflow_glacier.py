@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ import pandas as pd
 import yaml
 import sys
 import gc
+import pickle
 from numpy.typing import NDArray
 
 from topoflow_glacier.bmi.bmi_base import BmiBase
@@ -203,6 +205,8 @@ class BmiTopoflowGlacier(BmiBase):
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
+        # Create the arrays holding serializtion data
+        self._free_serialized()
 
         self._ngen_realization_start_time = None
         self._ngen_realization_end_time = None
@@ -290,12 +294,17 @@ class BmiTopoflowGlacier(BmiBase):
     @property
     def uz(self) -> np.ndarray:
         """Wind-speed magnitude used by physics (derived or set)."""
-        return np.array([self._wind_speed], dtype="float64")
+        return self._dynamic_inputs.value("wind_speed_UV")
 
-    @uz.setter
-    def uz(self, value: np.ndarray) -> None:
-        """Setter for wind-speed magnitude (legacy support)."""
-        self._wind_speed = float(np.asarray(value).reshape(-1)[0])
+    @property
+    def wind_u(self) -> np.ndarray:
+        """Wind-speed magnitude in the X direction."""
+        return self._dynamic_inputs.value("land_surface_wind__x_component_of_velocity")
+
+    @property
+    def wind_v(self) -> np.ndarray:
+        """Wind-speed magnitude in the Y direction."""
+        return self._dynamic_inputs.value("land_surface_wind__y_component_of_velocity")
 
     @property
     def runoff_depth(self) -> np.ndarray:
@@ -425,7 +434,7 @@ class BmiTopoflowGlacier(BmiBase):
             if key in cfg_dict and cfg_dict[key] is not None and not isinstance(cfg_dict[key], str):
                 cfg_dict[key] = str(cfg_dict[key])
 
-        self.cfg = TopoflowGlacierConfig.model_validate(cfg_dict)
+        self.cfg: TopoflowGlacierConfig = TopoflowGlacierConfig.model_validate(cfg_dict)
 
         # --- constants & unit helpers ---
         self.hours_per_day = np.float64(24)
@@ -743,6 +752,7 @@ class BmiTopoflowGlacier(BmiBase):
                 "_dynamic_inputs",
                 "_calibs",
                 "_outputs",
+                "_serialized",
                 "cfg",
                 "slopes",
                 "P_snow_3day_watershed",
@@ -775,14 +785,6 @@ class BmiTopoflowGlacier(BmiBase):
                         setattr(self, name, None)
                     except Exception:
                         # Don't let any single attribute break finalize
-                        pass
-
-            # Clear dynamic wind state as well
-            for name in ("_wind_u", "_wind_v", "_wind_speed"):
-                if hasattr(self, name):
-                    try:
-                        setattr(self, name, 0.0)
-                    except Exception:
                         pass
 
             # Optional: encourage garbage collection once we've dropped references.
@@ -1012,7 +1014,8 @@ class BmiTopoflowGlacier(BmiBase):
         raise ValueError(f"Unrecognized datetime format: {s!r}")
 
     def _recompute_wind_speed(self) -> None:
-        self._wind_speed = float((self._wind_u ** 2 + self._wind_v ** 2) ** 0.5)
+        wind_speed = (self.wind_u ** 2 + self.wind_v ** 2) ** 0.5
+        self._dynamic_inputs.set_value("wind_speed_UV", wind_speed)
 
     def update_atm_pressure_from_elevation(self, T_C=True, MBAR=False):
         """
@@ -2486,25 +2489,27 @@ class BmiTopoflowGlacier(BmiBase):
 
     def get_value(self, name: str, dest) -> None:
         """BMI get_value: copy variable 'name' into provided 'dest' array."""
-
-        if name == "wind_speed_UV":
-            arr = np.array([self._wind_speed], dtype="float64")
-            if dest is None:
-                return arr.copy()
-            dest[: arr.size] = arr
-            return dest
-
         # Prefer outputs first, then inputs, so discharge/melt are readable
-        if name in self._outputs:
-            src = self._outputs.value(name)
-        elif name in self._dynamic_inputs:
-            src = self._dynamic_inputs.value(name)
+        if name == Serialization.SIZE:
+            dest[:] = self._serialized.nbytes
         else:
-            raise KeyError(f"Unknown BMI variable name: {name}")
-        np.copyto(dest, np.asarray(src, dtype="float64"))
+            dest[:] = self.get_value_ptr(name)
 
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
+        if name == Serialization.CREATE:
+            self._serialize()
+            return
+        elif name == Serialization.STATE:
+            self._deserialize(values)
+            return
+        elif name == Serialization.FREE:
+            self._free_serialized()
+            return
+        elif name == Serialization.RESET:
+            self._reset_time()
+            return
+
         arr = np.asarray(values, dtype="float64").reshape(-1)
 
         if name == "ngen_realization_start_time":
@@ -2533,66 +2538,24 @@ class BmiTopoflowGlacier(BmiBase):
                 pass
             return
 
-        if name == "land_surface_wind__x_component_of_velocity":
+        if name in {
+            "land_surface_wind__x_component_of_velocity",
+            "U2D",
+            "atmosphere_wind__x_component_of_velocity"
+        }:
             # Accept U-component (m s-1)
-            self._wind_u = float(arr[0])
-            try:
-                self._dynamic_inputs.set_value(name, arr)
-            except Exception:
-                pass
-            try:
-                self._recompute_wind_speed()
-            except Exception:
-                pass
+            self._dynamic_inputs.set_value("land_surface_wind__x_component_of_velocity", arr)
+            self._recompute_wind_speed()
             return
 
-        if name == "land_surface_wind__y_component_of_velocity":
+        if name in {
+            "land_surface_wind__y_component_of_velocity",
+            "V2D",
+            "atmosphere_wind__y_component_of_velocity"
+        }:
             # Accept V-component (m s-1)
-            self._wind_v = float(arr[0])
-            try:
-                self._dynamic_inputs.set_value(name, arr)
-            except Exception:
-                pass
-            try:
-                self._recompute_wind_speed()
-            except Exception:
-                pass
-            return
-
-        if name in ("U2D", "atmosphere_wind__x_component_of_velocity"):
-            # Alternate names for U-component
-            self._wind_u = float(arr[0])
-            try:
-                self._dynamic_inputs.set_value(name, arr)
-            except Exception:
-                pass
-            try:
-                self._recompute_wind_speed()
-            except Exception:
-                pass
-            return
-
-        if name in ("V2D", "atmosphere_wind__y_component_of_velocity"):
-            # Alternate names for V-component
-            self._wind_v = float(arr[0])
-            try:
-                self._dynamic_inputs.set_value(name, arr)
-            except Exception:
-                pass
-            try:
-                self._recompute_wind_speed()
-            except Exception:
-                pass
-            return
-
-        if name in ("wind_speed_UV", "land_surface_wind__speed", "atmosphere_wind__speed"):
-            # Legacy: directly set wind speed magnitude (m s-1)
-            self._wind_speed = float(arr[0])
-            try:
-                # Keep a copy in dynamic inputs if present
-                self._dynamic_inputs.set_value("wind_speed_UV", np.array([self._wind_speed], dtype="float64"))
-            except Exception:
-                pass
+            self._dynamic_inputs.set_value("land_surface_wind__y_component_of_velocity", arr)
+            self._recompute_wind_speed()
             return
 
         if name == "atmosphere_water__liquid_equivalent_precipitation_rate":
@@ -2746,6 +2709,8 @@ class BmiTopoflowGlacier(BmiBase):
         -------
             int: number of bytes representing a single variable of @p name
         """
+        if Serialization.dtype(name) is not None:
+            return Serialization.dtype(name).itemsize
         return self.get_value_ptr(name).itemsize
 
     def get_var_nbytes(self, name: str) -> int:
@@ -2758,6 +2723,10 @@ class BmiTopoflowGlacier(BmiBase):
         -------
             int: Size of data array in bytes.
         """
+        if Serialization.dtype(name) is not None:
+            if name == Serialization.STATE:
+                return self._serialized.nbytes
+            return Serialization.dtype(name).itemsize
         return self.get_value_ptr(name).nbytes
 
     def get_var_type(self, name: str) -> str:
@@ -2770,6 +2739,8 @@ class BmiTopoflowGlacier(BmiBase):
         -------
             str: Data type.
         """
+        if Serialization.dtype(name) is not None:
+            return str(Serialization.dtype(name))
         return str(self.get_value_ptr(name).dtype)
 
     def get_current_datetime(self, time_units: str = "seconds"):
@@ -2867,10 +2838,86 @@ class BmiTopoflowGlacier(BmiBase):
         self._n_steps = int(np.ceil(total_seconds / self._timestep_size_s - 1e-12))
         self._run_end_time_s = float(self._n_steps) * self._timestep_size_s
 
+    def _serialize(self):
+        """Create a serialized copy of the current model state needed to reload a prior timestep or hot start the model."""
+        serializable = {
+            "dynamic_inputs": self._dynamic_inputs.serializable(),
+            "outputs": self._outputs.serializable(),
+            "attr": { attr: getattr(self, attr) for attr in self._serializable_attr() }
+        }
+        serialized = pickle.dumps(serializable)
+        self._serialized = np.array(bytearray(serialized), dtype=self._serialized.dtype)
+
+    def _deserialize(self, arr: NDArray):
+        """Load a prior model state from a numpy array of bytes."""
+        deserialized = pickle.loads(bytes(arr))
+        self._dynamic_inputs.load_serialized(deserialized["dynamic_inputs"])
+        self._outputs.load_serialized(deserialized["outputs"])
+        for attr, value in deserialized["attr"].items():
+            setattr(self, attr, value)
+        self._free_serialized()
+
+    def _free_serialized(self):
+        """Create a new instance of the serialization array, letting the GC free any prior instance."""
+        self._serialized = np.array([], Serialization.dtype(Serialization.STATE))
+
+    def _reset_time(self):
+        """Reset the current time-based properties to the default value after `initialize` was run.\n
+        This includes both attributes that store time information and BMI values that represent a sum from all timesteps."""
+        for attr in self._time_reset_attr():
+            value = getattr(self, attr)
+            if isinstance(value, int):
+                setattr(self, attr, 0)
+            elif isinstance(value, float):
+                setattr(self, attr, 0.0)
+            else: # assume it's a numpy array
+                value[:] = 0.0
+
+    def _serializable_attr(self):
+        return [
+            "albedo", # updates based on itself
+            "P_snow_3day_watershed", # updates based on itself
+            "n", # updates based on itself
+            "em_air", # updates based on itself,
+            "Eccs", # updates from prior ws_density_ratio
+            "Ecci", # updates based on itself
+        ] + self._time_reset_attr()
+
+    def _time_reset_attr(self):
+        return [
+            "vol_P", # sum between updates
+            "vol_PR", # sum between updates
+            "vol_PS", # sum between updates
+            "vol_IM", # sum between updates
+            "vol_SM", # sum between updates
+            "_timestep",
+            "_t_index",
+        ]
+
 def first_containing(name: str, *states: Context) -> Context:
     """Return the first `State` object containing `name` in `states`. Otherwise, raise `KeyError`."""
     for state in states:
         if name in state:
             return state
-    raise KeyError(f"unknown name: {name!s}")
+    raise KeyError(f"Unknown BMI variable name: {name!s}")
 
+class Serialization:
+    STATE = "serialization_state"
+    SIZE = "serialization_size"
+    CREATE = "serialization_create"
+    FREE = "serialization_free"
+    RESET = "reset_time"
+
+    @staticmethod
+    def dtype(method: str):
+        if method == Serialization.STATE:
+            return np.dtype(np.uint8)
+        if method == Serialization.RESET:
+            return np.dtype(np.double)
+        if (
+            method == Serialization.CREATE
+            or method == Serialization.SIZE
+            or method == Serialization.FREE
+        ):
+            return np.dtype(np.uint64)
+        return None
