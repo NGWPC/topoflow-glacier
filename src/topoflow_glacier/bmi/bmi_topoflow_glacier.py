@@ -294,7 +294,11 @@ class BmiTopoflowGlacier(BmiBase):
     @property
     def uz(self) -> np.ndarray:
         """Wind-speed magnitude used by physics (derived or set)."""
-        return self._dynamic_inputs.value("wind_speed_UV")
+        try:
+            return self._uz
+        except AttributeError:
+            self._recompute_wind_speed()
+            return self._uz
 
     @property
     def wind_u(self) -> np.ndarray:
@@ -1014,8 +1018,7 @@ class BmiTopoflowGlacier(BmiBase):
         raise ValueError(f"Unrecognized datetime format: {s!r}")
 
     def _recompute_wind_speed(self) -> None:
-        wind_speed = (self.wind_u ** 2 + self.wind_v ** 2) ** 0.5
-        self._dynamic_inputs.set_value("wind_speed_UV", wind_speed)
+        self._uz = (self.wind_u ** 2 + self.wind_v ** 2) ** 0.5
 
     def update_atm_pressure_from_elevation(self, T_C=True, MBAR=False):
         """
