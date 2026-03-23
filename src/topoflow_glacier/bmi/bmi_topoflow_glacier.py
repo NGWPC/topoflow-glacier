@@ -2561,6 +2561,10 @@ class BmiTopoflowGlacier(BmiBase):
             self._recompute_wind_speed()
             return
 
+        if name in {"wind_speed_UV", "land_surface_wind__speed"}:
+            self.uz[:] = values
+            return
+
         if name == "atmosphere_water__liquid_equivalent_precipitation_rate":
             # Convert mm h-1 -> m s-1
             vals_mps = arr / 3_600_000.0
@@ -2884,6 +2888,7 @@ class BmiTopoflowGlacier(BmiBase):
             "em_air", # updates based on itself,
             "Eccs", # updates from prior ws_density_ratio
             "Ecci", # updates based on itself
+            "uz", # pseudo-dynamic input
         ] + self._time_reset_attr()
 
     def _time_reset_attr(self):
