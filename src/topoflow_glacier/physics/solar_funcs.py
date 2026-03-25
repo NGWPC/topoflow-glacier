@@ -119,10 +119,10 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 from timezonefinder import TimezoneFinder
-from topoflow_glacier_ewts import MODULE_NAME
 
 import logging
-LOG = logging.getLogger(MODULE_NAME)
+import ewts
+LOG = ewts.get_logger(ewts.TOPOFLOW_GLACIER_ID)
 
 tf = TimezoneFinder()
 
