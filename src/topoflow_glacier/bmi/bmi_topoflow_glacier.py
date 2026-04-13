@@ -165,8 +165,8 @@ class BmiTopoflowGlacier(BmiBase):
         """Getter for the precipitation output variable in mm s-1"""
         return self._outputs.value("precipitation_rate")
 
-    @P.setter
-    def P(self, value: np.ndarray) -> None:
+    @P_rate.setter
+    def P_rate(self, value: np.ndarray) -> None:
         """Setter for the precipitation output variable in mm s-1"""
         self._outputs.set_value("precipitation_rate", value)
 
@@ -2686,6 +2686,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         return self.start_datetime
 
+
     def get_var_units(self, name: str) -> str:
         units = {
             # Inputs (advertised)
@@ -2696,7 +2697,6 @@ class BmiTopoflowGlacier(BmiBase):
             "land_surface_air__pressure": "Pa",
             "atmosphere_air_water~vapor__relative_saturation": "1",
             "atmosphere_bottom_air_water-vapor__relative_saturation": "1",
-
             "wind_speed_UV": "m s-1",
             "land_surface_wind__speed": "m s-1",
             "land_surface_wind__x_component_of_velocity": "m s-1",
@@ -2713,6 +2713,11 @@ class BmiTopoflowGlacier(BmiBase):
             "glacier__liquid_equivalent_depth": "m",
             "precipitation_rate": "mm s-1",
             "channel_water_x-section__volume_flow_rate": "m3 s-1",
+
+            # New outputs
+            "atmosphere_water__snowfall_leq-volume_flux": "m s-1",
+            "snowpack__domain_time_integral_of_melt_volume_flux": "m3",
+            "land_surface__temperature": "degC",
         }
         try:
             return units[name]
