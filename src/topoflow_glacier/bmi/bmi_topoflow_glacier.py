@@ -49,9 +49,9 @@ _output_vars = [
     # NEW: discharge expected by NGen (m3 s-1)
     ("channel_water_x-section__volume_flow_rate", "m3 s-1"),
 
-    ("atmosphere_water__snowfall_leq-volume_flux", "m s-1"),
-    ("snowpack__domain_time_integral_of_melt_volume_flux", "m3"),
-    ("land_surface__temperature", "degC"),
+    ("atmosphere_water__snowfall_leq-volume_flux", "mm s-1"),
+    ("snowpack__domain_time_integral_of_melt_volume_flux", "mm"),
+    ("land_surface__temperature", "K"),
 ]
 
 # --------------   Complete Name Crosswalk   -----------------------------
@@ -328,17 +328,21 @@ class BmiTopoflowGlacier(BmiBase):
 
     def _sync_internal_outputs(self) -> None:
         """Copy internal model variables into the BMI output context."""
+
+        # print("P_snow:", self.P_snow)
+        # print("vol_SM:", self.vol_SM)
+        # print("T_surf:", self.T_surf)
         self._outputs.set_value(
             "atmosphere_water__snowfall_leq-volume_flux",
-            np.asarray(self.P_snow, dtype="float64").reshape(-1),
+            np.asarray(self.P_snow * 1000.0, dtype="float64").reshape(-1),   # m/s -> mm/s
         )
         self._outputs.set_value(
             "snowpack__domain_time_integral_of_melt_volume_flux",
-            np.asarray(self.vol_SM, dtype="float64").reshape(-1),
+            np.asarray((self.vol_SM / self.da_m2) * 1000.0, dtype="float64").reshape(-1),  # m -> mm, if vol_SM is m3 over area
         )
         self._outputs.set_value(
             "land_surface__temperature",
-            np.asarray(self.T_surf, dtype="float64").reshape(-1),
+            np.asarray(self.T_surf + 273.15, dtype="float64").reshape(-1),   # degC -> K
         )
 
     def initialize(self, config_file: str | Path) -> None:
@@ -348,6 +352,8 @@ class BmiTopoflowGlacier(BmiBase):
         # --- load config (YAML -> TopoflowGlacierConfig) ---
         with open(config_file) as f:
             cfg_dict = yaml.safe_load(f)
+
+        print(f"bmi config file : {config_file}")
 
         for key in ("start_time", "end_time"):
             if key in cfg_dict and not isinstance(cfg_dict[key], str):
@@ -524,6 +530,8 @@ class BmiTopoflowGlacier(BmiBase):
         self._skip_solar_geometry = True
 
         self._sync_internal_outputs()
+        print(f"Output vars : {self.get_output_var_names()}")
+
 
         LOG.info("initialize complete")
 
@@ -2715,9 +2723,9 @@ class BmiTopoflowGlacier(BmiBase):
             "channel_water_x-section__volume_flow_rate": "m3 s-1",
 
             # New outputs
-            "atmosphere_water__snowfall_leq-volume_flux": "m s-1",
-            "snowpack__domain_time_integral_of_melt_volume_flux": "m3",
-            "land_surface__temperature": "degC",
+            "atmosphere_water__snowfall_leq-volume_flux": "mm s-1",
+            "snowpack__domain_time_integral_of_melt_volume_flux": "mm",
+            "land_surface__temperature": "K",
         }
         try:
             return units[name]
