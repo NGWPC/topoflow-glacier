@@ -329,16 +329,15 @@ class BmiTopoflowGlacier(BmiBase):
     def _sync_internal_outputs(self) -> None:
         """Copy internal model variables into the BMI output context."""
 
-        # print("P_snow:", self.P_snow)
-        # print("vol_SM:", self.vol_SM)
-        # print("T_surf:", self.T_surf)
         self._outputs.set_value(
             "atmosphere_water__snowfall_leq-volume_flux",
             np.asarray(self.P_snow * 1000.0, dtype="float64").reshape(-1),   # m/s -> mm/s
         )
+
+        snow_melt_mm = (self.vol_SM / self.da_m2) * 1000.0    # m -> mm, if vol_SM is m3 over area
         self._outputs.set_value(
             "snowpack__domain_time_integral_of_melt_volume_flux",
-            np.asarray((self.vol_SM / self.da_m2) * 1000.0, dtype="float64").reshape(-1),  # m -> mm, if vol_SM is m3 over area
+            np.asarray(snow_melt_mm, dtype="float64").reshape(-1),
         )
         self._outputs.set_value(
             "land_surface__temperature",
@@ -353,7 +352,7 @@ class BmiTopoflowGlacier(BmiBase):
         with open(config_file) as f:
             cfg_dict = yaml.safe_load(f)
 
-        print(f"bmi config file : {config_file}")
+        LOG.info(f"bmi config file : {config_file}")
 
         for key in ("start_time", "end_time"):
             if key in cfg_dict and not isinstance(cfg_dict[key], str):
@@ -530,7 +529,7 @@ class BmiTopoflowGlacier(BmiBase):
         self._skip_solar_geometry = True
 
         self._sync_internal_outputs()
-        print(f"Output vars : {self.get_output_var_names()}")
+        LOG.debug(f"Output vars : {self.get_output_var_names()}")
 
 
         LOG.info("initialize complete")
