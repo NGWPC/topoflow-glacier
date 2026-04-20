@@ -833,7 +833,7 @@ class BmiTopoflowGlacier(BmiBase):
         self._realization_start_str = str(start_iso)
         self._realization_end_str   = str(end_iso)
         self._adapter_time_configured = False
-
+        
     def _recompute_adapter_time_bounds(self, start_dt: datetime, end_dt: datetime) -> None:
         """
         Given concrete datetimes and the already-known dt (seconds), recompute
