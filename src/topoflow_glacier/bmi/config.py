@@ -13,8 +13,15 @@ class TopoflowGlacierConfig(BaseModel):
     site_prefix: str = Field(description="File prefix for the study site")
     forcing_file: str = Field(description="The forcing .csv file to be used")
     dt: int = Field(ge=0, description="Timestep for snowmelt process [hour]")
-    start_time: str = Field(description="The start time for the model run [YYYYMMDDHH]")
-    end_time: str = Field(description="The end time for the model run [YYYYMMDDHH]")
+    start_time: str | None = Field(
+        default=None,
+        description="(Optional) Start time [YYYYMMDDHH]. Ignored when provided via ngen realization."
+    )
+
+    end_time: str | None = Field(
+        default=None,
+        description="(Optional) End time [YYYYMMDDHH]. Ignored when provided via ngen realization."
+    )
     da: float = Field(description="The drainage area of the modeled reach [km2]")
     slope: float = Field(description="The slope of the catchment [m km-1]")
     lat: float = Field(description="Latitude of the centroid of the catchment")
