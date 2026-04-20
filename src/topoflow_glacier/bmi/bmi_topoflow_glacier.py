@@ -413,7 +413,7 @@ class BmiTopoflowGlacier(BmiBase):
         LOG.info(f"bmi config file : {config_file}")
 
         for key in ("start_time", "end_time"):
-            if key in cfg_dict and not isinstance(cfg_dict[key], str):
+            if key in cfg_dict and cfg_dict[key] is not None and not isinstance(cfg_dict[key], str):
                 cfg_dict[key] = str(cfg_dict[key])
 
         self.cfg = TopoflowGlacierConfig.model_validate(cfg_dict)
@@ -443,12 +443,30 @@ class BmiTopoflowGlacier(BmiBase):
         self.days_per_dt = self.dt / 86400.0
         self._timestep_size_s = float(self.dt)
 
-        # >>> NEW: apply realization-provided times (if any) using the known dt
-        # This sets start/end datetimes and adapter bounds, overriding YAML
-        # if self._realization_start_str/_realization_end_str exist.
-        if hasattr(self, "_apply_realization_time_from_strings"):
-            self._apply_realization_time_from_strings()
-        # <<< END NEW
+        # --- initialize adapter time state ---
+        self._adapter_time_configured = False
+        self._adapter_start_time_s = 0.0
+        self._run_end_time_s = None
+        self._adapter_end_time_s = None
+
+        # Prefer realization-provided times from ngen.  Fall back to config times only
+        # when realization times were not supplied and config times are available.
+        self._apply_realization_time_from_strings()
+
+        if not self._adapter_time_configured:
+            if self.cfg.start_time is None or self.cfg.end_time is None:
+                raise RuntimeError(
+                    "TopoFlow-Glacier requires realization time from ngen or fallback start_time/end_time in config."
+                )
+
+            start_dt = self._parse_iso_like(self.cfg.start_time)
+            end_dt = self._parse_iso_like(self.cfg.end_time)
+            self._recompute_adapter_time_bounds(start_dt, end_dt)
+
+            LOG.info(
+                "Using fallback config time: start=%s end=%s dt=%gs",
+                self.start_datetime, self.end_datetime, self._timestep_size_s
+            )
 
         # --- dynamic input & output contexts already exist from __init__ ---
         # Initialize meteorology / energy stores (mutable scalars/arrays used in update())
@@ -536,35 +554,14 @@ class BmiTopoflowGlacier(BmiBase):
 
         self._finalized: bool = False
 
-        # --- time parsing & adapter bounds ---
-        # Only do the YAML-based time parsing if realization hasn't already set bounds
-        if getattr(self, "_adapter_end_time_s", None) is None:
-            # --- time parsing (build start/end datetimes early!) ---
-            self.start_year, self.start_month, self.start_day, self.start_hour = self._parse_yyyymmddhh(self.cfg.start_time)
-            self.end_year,   self.end_month,   self.end_day,   self.end_hour   = self._parse_yyyymmddhh(self.cfg.end_time)
-
-            self.start_datetime = pd.to_datetime(
-                solar.get_datetime_str(self.start_year, self.start_month, self.start_day, self.start_hour, 0, 0)
-            )
-            self.end_datetime = pd.to_datetime(
-                solar.get_datetime_str(self.end_year, self.end_month, self.end_day, self.end_hour, 0, 0)
-            )
-
-            # julian day seed
-            self.year = self.start_year
-            self.julian_day = solar.Julian_Day(self.start_month, self.start_day, self.start_hour, year=self.start_year)
-
-            # --- adapter time bounds (so get_end_time() is always valid) ---
-            total_seconds = float((self.end_datetime - self.start_datetime).total_seconds())
-            dt = float(self._timestep_size_s)
-            n_full = int(np.floor(total_seconds / dt + 1e-12))  # number of advances to last valid state
-            self._n_steps = n_full + 1                           # number of *states* including t0
-            self._run_end_time_s = float(n_full) * dt            # last valid model time (current_time cannot exceed this)
-            self._adapter_end_time_s = float(n_full + 1) * dt    # one extra dt for adapter queries
-        else:
-            # If realization already set dates, seed Julian day from those start fields.
-            self.year = self.start_datetime.year
-            self.julian_day = solar.Julian_Day(self.start_datetime.month, self.start_datetime.day, self.start_datetime.hour, year=self.year)
+        # julian day seed from adapter-configured start time
+        self.year = self.start_datetime.year
+        self.julian_day = solar.Julian_Day(
+            self.start_datetime.month,
+            self.start_datetime.day,
+            self.start_datetime.hour,
+            year=self.year
+        )
 
         # --- wind state (components + magnitude) ---
         self._wind_u = 0.0
@@ -593,7 +590,6 @@ class BmiTopoflowGlacier(BmiBase):
         self._sync_internal_outputs()
         LOG.debug(f"Output vars : {self.get_output_var_names()}")
 
-
         LOG.info("initialize complete")
 
     def _init_three_day_snow_buffer(self) -> None:
@@ -608,6 +604,9 @@ class BmiTopoflowGlacier(BmiBase):
     def update(self) -> None:
         """Advance exactly one dt without exceeding run end; safe for adapter fencepost."""
         LOG.debug("update")
+
+        if not self._adapter_time_configured:
+            raise RuntimeError("TopoFlow-Glacier: realization time not set before update")
 
         dt = float(self.get_time_step())
         t_now = self.get_current_time()
@@ -829,11 +828,11 @@ class BmiTopoflowGlacier(BmiBase):
     def adapter_set_realization_times(self, start_iso: str, end_iso: str) -> None:
         """
         Called by the NGen BMI adapter (or your driver) BEFORE/AT initialize
-        to provide the realization’s time window. This does not compute
-        bounds yet; initialize will consume these values.
+        to provide the realization’s time window.
         """
         self._realization_start_str = str(start_iso)
         self._realization_end_str   = str(end_iso)
+        self._adapter_time_configured = False
 
     def _recompute_adapter_time_bounds(self, start_dt: datetime, end_dt: datetime) -> None:
         """
@@ -863,6 +862,8 @@ class BmiTopoflowGlacier(BmiBase):
         self.end_year, self.end_month, self.end_day, self.end_hour = (
             self.end_datetime.year, self.end_datetime.month, self.end_datetime.day, self.end_datetime.hour
         )
+
+        self._adapter_time_configured = True
 
         LOG.info(
             "Realization time applied: start=%s end=%s dt=%gs n_steps=%d "
