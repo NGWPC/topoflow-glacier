@@ -48,6 +48,10 @@ _output_vars = [
     ("precipitation_rate", "mm s-1"),
     # NEW: discharge expected by NGen (m3 s-1)
     ("channel_water_x-section__volume_flow_rate", "m3 s-1"),
+
+    ("atmosphere_water__snowfall_leq-volume_flux", "mm s-1"),
+    ("snowpack__domain_time_integral_of_melt_volume_flux", "mm"),
+    ("land_surface__temperature", "K"),
 ]
 
 # --------------   Complete Name Crosswalk   -----------------------------
@@ -73,14 +77,16 @@ INTERNAL_NAME_CROSSWALK = {
     "land_surface_wind__x_component_of_velocity": "U2D",
     "land_surface_wind__y_component_of_velocity": "V2D",
     "precipitation_rate": "P_rate",
+
+    # NEW output mappings
+    "atmosphere_water__snowfall_leq-volume_flux": "P_snow",
+    "snowpack__domain_time_integral_of_melt_volume_flux": "vol_SM",
+    "land_surface__temperature": "T_surf",
     # Unused variables:
     # "atmosphere_bottom_air__mass-per-volume_density": "rho_air",
     # "atmosphere_bottom_air__mass-specific_isobaric_heat_capacity": "Cp_air",
     # "land_surface_net-total-energy__energy_flux": "Q_sum",
-    # "land_surface__temperature": "T_surf",
-    # "atmosphere_water__snowfall_leq-volume_flux": "P_snow",
     # "water-liquid__mass-per-volume_density": "rho_H2O",
-    # "snowpack__domain_time_integral_of_melt_volume_flux": "vol_SM",
     # "snowpack__initial_domain_integral_of_liquid-equivalent_depth": "vol_swe_start",
     # "snowpack__domain_integral_of_liquid-equivalent_depth": "vol_swe",
     # "snowpack__energy-per-area_cold_content": "Eccs",
@@ -159,8 +165,8 @@ class BmiTopoflowGlacier(BmiBase):
         """Getter for the precipitation output variable in mm s-1"""
         return self._outputs.value("precipitation_rate")
 
-    @P.setter
-    def P(self, value: np.ndarray) -> None:
+    @P_rate.setter
+    def P_rate(self, value: np.ndarray) -> None:
         """Setter for the precipitation output variable in mm s-1"""
         self._outputs.set_value("precipitation_rate", value)
 
@@ -320,6 +326,24 @@ class BmiTopoflowGlacier(BmiBase):
         """Setter for the relative humidity state variable"""
         self._outputs.set_value("atmosphere_bottom_air_water-vapor__relative_saturation", value)
 
+    def _sync_internal_outputs(self) -> None:
+        """Copy internal model variables into the BMI output context."""
+
+        self._outputs.set_value(
+            "atmosphere_water__snowfall_leq-volume_flux",
+            np.asarray(self.P_snow * 1000.0, dtype="float64").reshape(-1),   # m/s -> mm/s
+        )
+
+        snow_melt_mm = (self.vol_SM / self.da_m2) * 1000.0    # m -> mm, if vol_SM is m3 over area
+        self._outputs.set_value(
+            "snowpack__domain_time_integral_of_melt_volume_flux",
+            np.asarray(snow_melt_mm, dtype="float64").reshape(-1),
+        )
+        self._outputs.set_value(
+            "land_surface__temperature",
+            np.asarray(self.T_surf + 273.15, dtype="float64").reshape(-1),   # degC -> K
+        )
+
     def initialize(self, config_file: str | Path) -> None:
         """Initialize the BMI model and pre-compute all bookkeeping needed by the adapter."""
         LOG.info("initialize")
@@ -327,6 +351,8 @@ class BmiTopoflowGlacier(BmiBase):
         # --- load config (YAML -> TopoflowGlacierConfig) ---
         with open(config_file) as f:
             cfg_dict = yaml.safe_load(f)
+
+        LOG.info(f"bmi config file : {config_file}")
 
         for key in ("start_time", "end_time"):
             if key in cfg_dict and not isinstance(cfg_dict[key], str):
@@ -502,6 +528,10 @@ class BmiTopoflowGlacier(BmiBase):
         # optionally skip expensive solar geometry if SW forcing exists
         self._skip_solar_geometry = True
 
+        self._sync_internal_outputs()
+        LOG.debug(f"Output vars : {self.get_output_var_names()}")
+
+
         LOG.info("initialize complete")
 
     def _init_three_day_snow_buffer(self) -> None:
@@ -582,6 +612,7 @@ class BmiTopoflowGlacier(BmiBase):
         self.update_wi_density_ratio()
         self.update_ice_depth()
         self.update_snowpack_cold_content()
+        self._sync_internal_outputs()
 
         # advance index AFTER computing step diagnostics
         self._timestep += 1
@@ -2662,6 +2693,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         return self.start_datetime
 
+
     def get_var_units(self, name: str) -> str:
         units = {
             # Inputs (advertised)
@@ -2672,7 +2704,6 @@ class BmiTopoflowGlacier(BmiBase):
             "land_surface_air__pressure": "Pa",
             "atmosphere_air_water~vapor__relative_saturation": "1",
             "atmosphere_bottom_air_water-vapor__relative_saturation": "1",
-
             "wind_speed_UV": "m s-1",
             "land_surface_wind__speed": "m s-1",
             "land_surface_wind__x_component_of_velocity": "m s-1",
@@ -2689,6 +2720,11 @@ class BmiTopoflowGlacier(BmiBase):
             "glacier__liquid_equivalent_depth": "m",
             "precipitation_rate": "mm s-1",
             "channel_water_x-section__volume_flow_rate": "m3 s-1",
+
+            # New outputs
+            "atmosphere_water__snowfall_leq-volume_flux": "mm s-1",
+            "snowpack__domain_time_integral_of_melt_volume_flux": "mm",
+            "land_surface__temperature": "K",
         }
         try:
             return units[name]
