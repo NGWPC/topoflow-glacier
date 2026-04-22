@@ -422,8 +422,8 @@ class BmiTopoflowGlacier(BmiBase):
         self.hours_per_day = np.float64(24)
         self.seconds_per_Day = np.float64(86400)
         self.sec_per_year = np.float64(31536000)
-        self.mps_to_mmph = np.float64(3600000)          # m s-1 -> mm h-1
-        self.mmph_to_mps = np.float64(1.0) / 3600000.0  # mm h-1 -> m s-1
+        self.mps_to_mmph = np.float64(3600000)
+        self.mmph_to_mps = np.float64(1.0) / 3600000.0
         self.C_to_K = 273.15
         self.K_to_C = -273.15
         self.twopi = np.float64(2) * np.pi
@@ -432,12 +432,15 @@ class BmiTopoflowGlacier(BmiBase):
         # --- spatial constants ---
         self.da_km2 = np.float64(self.cfg.da)
         self.da_m2 = self.da_km2 * 1.0e6
-        self.slopes = np.array([self.cfg.slope], dtype="float64") if np.isscalar(self.cfg.slope) else np.asarray(self.cfg.slope, dtype="float64")
+        self.slopes = (
+            np.array([self.cfg.slope], dtype="float64")
+            if np.isscalar(self.cfg.slope)
+            else np.asarray(self.cfg.slope, dtype="float64")
+        )
 
         # --- timestep normalization: ensure dt is seconds ---
         self.dt = float(self.cfg.dt)
         if self.dt <= 10.0:
-            # Heuristic: legacy inputs often give hours as a small integer (1, 3, 6, …)
             LOG.warning(f"dt={self.dt} looks like HOURS; converting to seconds (dt *= 3600).")
             self.dt *= 3600.0
         self.days_per_dt = self.dt / 86400.0
@@ -449,36 +452,41 @@ class BmiTopoflowGlacier(BmiBase):
         self._run_end_time_s = None
         self._adapter_end_time_s = None
 
-        # Prefer realization-provided times from ngen.  Fall back to config times only
-        # when realization times were not supplied and config times are available.
         self._apply_realization_time_from_strings()
 
         if not self._adapter_time_configured:
-            if self.cfg.start_time is None or self.cfg.end_time is None:
-                raise RuntimeError(
-                    "TopoFlow-Glacier requires realization time from ngen or fallback start_time/end_time in config."
+            if self.cfg.start_time is not None and self.cfg.end_time is not None:
+                start_dt = self._parse_iso_like(self.cfg.start_time)
+                end_dt = self._parse_iso_like(self.cfg.end_time)
+
+                self._recompute_adapter_time_bounds(start_dt, end_dt)
+
+                LOG.info(
+                    "Using fallback config time: start=%s end=%s dt=%gs",
+                    self.start_datetime, self.end_datetime, self._timestep_size_s
+                )
+            else:
+                start_dt = pd.Timestamp("1970-01-01 00:00:00")
+                end_dt = start_dt + pd.Timedelta(seconds=float(self._timestep_size_s))
+
+                self._recompute_adapter_time_bounds(start_dt, end_dt)
+
+                LOG.info(
+                    "Using placeholder initialization time until ngen provides realization time: "
+                    "start=%s end=%s dt=%gs",
+                    self.start_datetime, self.end_datetime, self._timestep_size_s
                 )
 
-            start_dt = self._parse_iso_like(self.cfg.start_time)
-            end_dt = self._parse_iso_like(self.cfg.end_time)
-            self._recompute_adapter_time_bounds(start_dt, end_dt)
-
-            LOG.info(
-                "Using fallback config time: start=%s end=%s dt=%gs",
-                self.start_datetime, self.end_datetime, self._timestep_size_s
-            )
-
-        # --- dynamic input & output contexts already exist from __init__ ---
-        # Initialize meteorology / energy stores (mutable scalars/arrays used in update())
+        # --- dynamic input & output contexts ---
         self.T_surf = np.array([0.0], dtype="float64")
         self.RH = np.array([0.0], dtype="float64")
-        self.p0 = np.array([0.0], dtype="float64")             # kPa (will convert to mbar as needed)
-        self.z = np.array([10.0], dtype="float64")             # wind reference height [m]
+        self.p0 = np.array([0.0], dtype="float64")
+        self.z = np.array([10.0], dtype="float64")
         self.cloud_factor = np.array([0.0], dtype="float64")
         self.canopy_factor = np.array([0.0], dtype="float64")
         self.P_rain = np.array([0.0], dtype="float64")
         self.P_snow = np.array([0.0], dtype="float64")
-        self.e_air = np.array([1e-6], dtype="float64")         # tiny positive to avoid log(0) at first step
+        self.e_air = np.array([1e-6], dtype="float64")
         self.e_surf = np.array([1e-6], dtype="float64")
         self.em_air = np.array([0.0], dtype="float64")
         self.Qn_SW = np.array([0.0], dtype="float64")
@@ -488,22 +496,22 @@ class BmiTopoflowGlacier(BmiBase):
         self.Qa = np.array([0.0], dtype="float64")
         self.Qe = np.array([0.0], dtype="float64")
         self.P_max = np.array([0.0], dtype="float64")
-        self.vol_P  = np.array([0.0], dtype="float64")
+        self.vol_P = np.array([0.0], dtype="float64")
         self.vol_PR = np.array([0.0], dtype="float64")
         self.vol_PS = np.array([0.0], dtype="float64")
         self.Qn_tot = np.array([0.0], dtype="float64")
 
-        # --- ice/snow constants from config ---
+        # --- ice/snow constants ---
         self.rho_H2O = np.float64(self.cfg.rho_H2O)
         self.rho_ice = np.float64(self.cfg.rho_ice)
-        self.Cp_ice  = np.float64(self.cfg.Cp_ice)
-        self.g       = np.float64(self.cfg.g)
-        self.Qg      = np.float64(self.cfg.geothermal_heat_flux)
+        self.Cp_ice = np.float64(self.cfg.Cp_ice)
+        self.g = np.float64(self.cfg.g)
+        self.Qg = np.float64(self.cfg.geothermal_heat_flux)
         self.grad_Tz = np.float64(self.cfg.geothermal_gradient)
 
         self.rho_snow = np.float64(self.cfg.rho_snow)
-        self.Cp_snow  = np.float64(self.cfg.Cp_snow)
-        self.Lf       = np.float64(self.cfg.Lf)
+        self.Cp_snow = np.float64(self.cfg.Cp_snow)
+        self.Lf = np.float64(self.cfg.Lf)
         self._calibs.set_value("T_rain_snow", np.array([self.cfg.T_rain_snow], dtype="float64"))
 
         # --- state variables ---
@@ -513,7 +521,6 @@ class BmiTopoflowGlacier(BmiBase):
         self.vol_MR = np.array([0.0], dtype="float64")
         self.meltrate = np.array([0.0], dtype="float64")
 
-        # outputs that must start from cfg
         self._outputs.set_value("snowpack__depth", np.array([self.cfg.h0_snow], dtype="float64"))
         self._outputs.set_value("glacier_ice__thickness", np.array([self.cfg.h0_ice], dtype="float64"))
         self._outputs.set_value("snowpack__liquid-equivalent_depth", np.array([self.cfg.h0_swe], dtype="float64"))
@@ -537,7 +544,7 @@ class BmiTopoflowGlacier(BmiBase):
         # albedo & snowfall buffer
         self.albedo = np.array([0.3], dtype="float64")
         self._init_three_day_snow_buffer()
-        self.n = np.array([0.0], dtype="float64")  # days since major snowfall
+        self.n = np.array([0.0], dtype="float64")
 
         # density ratios
         self.ws_density_ratio = self.rho_H2O / self.rho_snow
@@ -549,12 +556,12 @@ class BmiTopoflowGlacier(BmiBase):
         del_T = self.T0_cc - T_snow
         self.Eccs = (self.rho_snow * self.Cp_snow) * self.h_snow * del_T
         self.Eccs = np.maximum(self.Eccs, np.array([0.0]))
-        self.Ecci = (self.rho_ice  * self.Cp_ice ) * self.h_active_layer * del_T
+        self.Ecci = (self.rho_ice * self.Cp_ice) * self.h_active_layer * del_T
         self.Ecci = np.maximum(self.Ecci, np.array([0.0]))
 
-        self._finalized: bool = False
+        self._finalized = False
 
-        # julian day seed from adapter-configured start time
+        # julian day seed
         self.year = self.start_datetime.year
         self.julian_day = solar.Julian_Day(
             self.start_datetime.month,
@@ -563,20 +570,20 @@ class BmiTopoflowGlacier(BmiBase):
             year=self.year
         )
 
-        # --- wind state (components + magnitude) ---
+        # --- wind state ---
         self._wind_u = 0.0
         self._wind_v = 0.0
         self._wind_speed = 0.0
 
-        # --- previous storages for melt-rate limiting across steps ---
+        # --- previous storages ---
         self.previous_swe = np.array(self.h_swe, dtype="float64").copy()
         self.previous_iwe = np.array(self.h_iwe, dtype="float64").copy()
 
-        # --- slope & aspect-dependent geometry ---
+        # --- slope & aspect ---
         self.set_aspect_angle()
         self.set_slope_angle()
 
-        # --- initial volumes from initial depths ---
+        # --- initial volumes ---
         self.vol_swe[:] = np.sum(np.float64(self.h_swe * self.cfg.da))
         self.vol_iwe[:] = np.sum(np.float64(self.h_iwe * self.cfg.da))
 
@@ -584,7 +591,6 @@ class BmiTopoflowGlacier(BmiBase):
         self._timestep = 0
         self._t_index = 0
 
-        # optionally skip expensive solar geometry if SW forcing exists
         self._skip_solar_geometry = True
 
         self._sync_internal_outputs()
