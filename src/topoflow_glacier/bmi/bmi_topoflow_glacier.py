@@ -37,10 +37,10 @@ _calib_vars = [
 
 _output_vars = [
     ("snowpack__depth", "m"),
-    ("snowpack__liquid-equivalent_depth", "m"),
+    ("snowpack__liquid-equivalent_depth", "kg m-2"),
     ("snowpack__melt_volume_flux", "m s-1"),
     ("glacier_ice__thickness", "m"),
-    ("glacier__liquid_equivalent_depth", "kg m-2"),
+    ("glacier__liquid_equivalent_depth", "m"),
     ("glacier_ice__melt_volume_flux", "m s-1"),
     ("land_surface_water__runoff_volume_flux", "m s-1"),
     ("land_surface_water__runoff_depth", "m"),
