@@ -2384,28 +2384,28 @@ class BmiTopoflowGlacier(BmiBase):
     def get_value(self, name: str, dest) -> None:
         """BMI get_value: copy variable 'name' into provided 'dest' array."""
 
-        if name == "wind_speed_UV":
-            arr = np.array([self._wind_speed], dtype="float64")
-            if dest is None:
-                return arr.copy()
-            dest[: arr.size] = arr
-            return dest
-
-        # NWM SNEQV expects kg m-2, while Topoflow-Glacier stores h_swe as m.
         if name == "snowpack__liquid-equivalent_depth":
             src = np.asarray(self._outputs.value(name), dtype="float64") * self.rho_H2O
             np.copyto(dest, src)
             return dest
 
-        # Prefer outputs first, then inputs, so discharge/melt are readable
+        if name in ("wind_speed_UV", "land_surface_wind__speed"):
+            arr = np.array([self._wind_speed], dtype="float64")
+            np.copyto(dest, arr)
+            return dest
+
         if name in self._outputs:
             src = self._outputs.value(name)
         elif name in self._dynamic_inputs:
             src = self._dynamic_inputs.value(name)
+        elif name in self._calibs:
+            src = self._calibs.value(name)
         else:
             raise KeyError(f"Unknown BMI variable name: {name}")
-        np.copyto(dest, np.asarray(src, dtype="float64"))
 
+        np.copyto(dest, np.asarray(src, dtype="float64"))
+        return dest
+    
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
         arr = np.asarray(values, dtype="float64").reshape(-1)
@@ -2612,11 +2612,11 @@ class BmiTopoflowGlacier(BmiBase):
         raise KeyError(f"Variable not found: {name}")
 
     def get_value_ptr(self, name: str) -> NDArray:
-        """Gets value in native form if exists in inputs or outputs"""
+        """Gets value in native form if exists in inputs or outputs."""
+
         if name in ("wind_speed_UV", "land_surface_wind__speed"):
             return np.array([self._wind_speed], dtype="float64")
 
-        # NWM SNEQV expects kg m-2, while Topoflow-Glacier stores h_swe as m.
         if name == "snowpack__liquid-equivalent_depth":
             self._sneqv_kg_m2 = (
                 np.asarray(self._outputs.value(name), dtype="float64") * self.rho_H2O
