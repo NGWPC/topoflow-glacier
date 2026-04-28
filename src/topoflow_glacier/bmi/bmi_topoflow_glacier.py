@@ -40,7 +40,7 @@ _output_vars = [
     ("snowpack__liquid-equivalent_depth", "m"),
     ("snowpack__melt_volume_flux", "m s-1"),
     ("glacier_ice__thickness", "m"),
-    ("glacier__liquid_equivalent_depth", "m"),
+    ("glacier__liquid_equivalent_depth", "kg m-2"),
     ("glacier_ice__melt_volume_flux", "m s-1"),
     ("land_surface_water__runoff_volume_flux", "m s-1"),
     ("land_surface_water__runoff_depth", "m"),
@@ -2391,6 +2391,12 @@ class BmiTopoflowGlacier(BmiBase):
             dest[: arr.size] = arr
             return dest
 
+        # NWM SNEQV expects kg m-2, while Topoflow-Glacier stores h_swe as m.
+        if name == "snowpack__liquid-equivalent_depth":
+            src = np.asarray(self._outputs.value(name), dtype="float64") * self.rho_H2O
+            np.copyto(dest, src)
+            return dest
+
         # Prefer outputs first, then inputs, so discharge/melt are readable
         if name in self._outputs:
             src = self._outputs.value(name)
@@ -2581,6 +2587,12 @@ class BmiTopoflowGlacier(BmiBase):
     def get_value_at_indices(self, name: str, dest: np.ndarray, inds: np.ndarray) -> np.ndarray:
         LOG.debug(f"get_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
+
+        if name == "snowpack__liquid-equivalent_depth":
+            src = np.asarray(self._outputs.value(name), dtype="float64") * self.rho_H2O
+            dest[: a_inds.size] = src[a_inds]
+            return dest
+
         if hasattr(self, "_outputs") and name in self._outputs:
             return self._outputs.value_at_indices(name, dest, a_inds)
         if hasattr(self, "_inputs") and name in self._inputs:
@@ -2603,6 +2615,14 @@ class BmiTopoflowGlacier(BmiBase):
         """Gets value in native form if exists in inputs or outputs"""
         if name in ("wind_speed_UV", "land_surface_wind__speed"):
             return np.array([self._wind_speed], dtype="float64")
+
+        # NWM SNEQV expects kg m-2, while Topoflow-Glacier stores h_swe as m.
+        if name == "snowpack__liquid-equivalent_depth":
+            self._sneqv_kg_m2 = (
+                np.asarray(self._outputs.value(name), dtype="float64") * self.rho_H2O
+            )
+            return self._sneqv_kg_m2
+
         return first_containing(name, self._outputs, self._dynamic_inputs, self._calibs).value(name)
 
     def get_var_itemsize(self, name: str) -> int:
@@ -2716,7 +2736,7 @@ class BmiTopoflowGlacier(BmiBase):
             "land_surface_water__runoff_depth": "m",
             "snowpack__depth": "m",
             "glacier_ice__thickness": "m",
-            "snowpack__liquid-equivalent_depth": "m",
+            "snowpack__liquid-equivalent_depth": "kg m-2",
             "glacier__liquid_equivalent_depth": "m",
             "precipitation_rate": "mm s-1",
             "channel_water_x-section__volume_flow_rate": "m3 s-1",
