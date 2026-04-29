@@ -68,7 +68,6 @@ INTERNAL_NAME_CROSSWALK = {
     # Output variable mappings (only used ones)
     "snowpack__depth": "h_snow",
     "snowpack__liquid-equivalent_depth": "h_swe",
-    "snowpack__liquid_equivalent_mass_per_area": "sneqv",
     "snowpack__melt_volume_flux": "SM",
     "glacier_ice__thickness": "h_ice",
     "glacier__liquid_equivalent_depth": "h_iwe",
@@ -2410,7 +2409,7 @@ class BmiTopoflowGlacier(BmiBase):
         else:
             raise KeyError(f"Unknown BMI variable name: {name}")
         np.copyto(dest, np.asarray(src, dtype="float64"))
-    
+
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
         arr = np.asarray(values, dtype="float64").reshape(-1)
@@ -2592,7 +2591,6 @@ class BmiTopoflowGlacier(BmiBase):
     def get_value_at_indices(self, name: str, dest: np.ndarray, inds: np.ndarray) -> np.ndarray:
         LOG.debug(f"get_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
-
         if hasattr(self, "_outputs") and name in self._outputs:
             return self._outputs.value_at_indices(name, dest, a_inds)
         if hasattr(self, "_inputs") and name in self._inputs:
