@@ -2395,22 +2395,21 @@ class BmiTopoflowGlacier(BmiBase):
     def get_value(self, name: str, dest) -> None:
         """BMI get_value: copy variable 'name' into provided 'dest' array."""
 
-        if name in ("wind_speed_UV", "land_surface_wind__speed"):
+        if name == "wind_speed_UV":
             arr = np.array([self._wind_speed], dtype="float64")
-            np.copyto(dest, arr)
+            if dest is None:
+                return arr.copy()
+            dest[: arr.size] = arr
             return dest
 
+        # Prefer outputs first, then inputs, so discharge/melt are readable
         if name in self._outputs:
             src = self._outputs.value(name)
         elif name in self._dynamic_inputs:
             src = self._dynamic_inputs.value(name)
-        elif name in self._calibs:
-            src = self._calibs.value(name)
         else:
             raise KeyError(f"Unknown BMI variable name: {name}")
-
         np.copyto(dest, np.asarray(src, dtype="float64"))
-        return dest
     
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
