@@ -37,7 +37,8 @@ _calib_vars = [
 
 _output_vars = [
     ("snowpack__depth", "m"),
-    ("snowpack__liquid-equivalent_depth", "kg m-2"),
+    ("snowpack__liquid-equivalent_depth", "m"),
+    ("snowpack__liquid_equivalent_mass_per_area", "kg m-2"),
     ("snowpack__melt_volume_flux", "m s-1"),
     ("glacier_ice__thickness", "m"),
     ("glacier__liquid_equivalent_depth", "m"),
@@ -67,6 +68,7 @@ INTERNAL_NAME_CROSSWALK = {
     # Output variable mappings (only used ones)
     "snowpack__depth": "h_snow",
     "snowpack__liquid-equivalent_depth": "h_swe",
+    "snowpack__liquid_equivalent_mass_per_area": "sneqv",
     "snowpack__melt_volume_flux": "SM",
     "glacier_ice__thickness": "h_ice",
     "glacier__liquid_equivalent_depth": "h_iwe",
@@ -330,6 +332,11 @@ class BmiTopoflowGlacier(BmiBase):
         """Copy internal model variables into the BMI output context."""
 
         self._outputs.set_value(
+            "snowpack__liquid_equivalent_mass_per_area",
+            np.asarray(self.h_swe * self.rho_H2O, dtype="float64").reshape(-1),
+        )
+
+        self._outputs.set_value(
             "atmosphere_water__snowfall_leq-volume_flux",
             np.asarray(self.P_snow * 1000.0, dtype="float64").reshape(-1),   # m/s -> mm/s
         )
@@ -441,6 +448,10 @@ class BmiTopoflowGlacier(BmiBase):
         self._outputs.set_value("snowpack__depth", np.array([self.cfg.h0_snow], dtype="float64"))
         self._outputs.set_value("glacier_ice__thickness", np.array([self.cfg.h0_ice], dtype="float64"))
         self._outputs.set_value("snowpack__liquid-equivalent_depth", np.array([self.cfg.h0_swe], dtype="float64"))
+        self._outputs.set_value(
+            "snowpack__liquid_equivalent_mass_per_area",
+            np.array([self.cfg.h0_swe * self.rho_H2O], dtype="float64"),
+        )
         self._outputs.set_value("glacier__liquid_equivalent_depth", np.array([self.cfg.h0_iwe], dtype="float64"))
         self._outputs.set_value("channel_water_x-section__volume_flow_rate", np.array([0.0], dtype="float64"))
         self._outputs.set_value("precipitation_rate", np.array([0.0], dtype="float64"))
@@ -2384,11 +2395,6 @@ class BmiTopoflowGlacier(BmiBase):
     def get_value(self, name: str, dest) -> None:
         """BMI get_value: copy variable 'name' into provided 'dest' array."""
 
-        if name == "snowpack__liquid-equivalent_depth":
-            src = np.asarray(self._outputs.value(name), dtype="float64") * self.rho_H2O
-            np.copyto(dest, src)
-            return dest
-
         if name in ("wind_speed_UV", "land_surface_wind__speed"):
             arr = np.array([self._wind_speed], dtype="float64")
             np.copyto(dest, arr)
@@ -2588,11 +2594,6 @@ class BmiTopoflowGlacier(BmiBase):
         LOG.debug(f"get_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
 
-        if name == "snowpack__liquid-equivalent_depth":
-            src = np.asarray(self._outputs.value(name), dtype="float64") * self.rho_H2O
-            dest[: a_inds.size] = src[a_inds]
-            return dest
-
         if hasattr(self, "_outputs") and name in self._outputs:
             return self._outputs.value_at_indices(name, dest, a_inds)
         if hasattr(self, "_inputs") and name in self._inputs:
@@ -2616,12 +2617,6 @@ class BmiTopoflowGlacier(BmiBase):
 
         if name in ("wind_speed_UV", "land_surface_wind__speed"):
             return np.array([self._wind_speed], dtype="float64")
-
-        if name == "snowpack__liquid-equivalent_depth":
-            self._sneqv_kg_m2 = (
-                np.asarray(self._outputs.value(name), dtype="float64") * self.rho_H2O
-            )
-            return self._sneqv_kg_m2
 
         return first_containing(name, self._outputs, self._dynamic_inputs, self._calibs).value(name)
 
@@ -2736,7 +2731,8 @@ class BmiTopoflowGlacier(BmiBase):
             "land_surface_water__runoff_depth": "m",
             "snowpack__depth": "m",
             "glacier_ice__thickness": "m",
-            "snowpack__liquid-equivalent_depth": "kg m-2",
+            "snowpack__liquid-equivalent_depth": "m",
+            "snowpack__liquid_equivalent_mass_per_area": "kg m-2",
             "glacier__liquid_equivalent_depth": "m",
             "precipitation_rate": "mm s-1",
             "channel_water_x-section__volume_flow_rate": "m3 s-1",
