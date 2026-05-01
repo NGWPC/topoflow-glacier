@@ -2493,10 +2493,7 @@ class BmiTopoflowGlacier(BmiBase):
     def get_value(self, name: str, dest) -> None:
         """BMI get_value: copy variable 'name' into provided 'dest' array."""
         # Prefer outputs first, then inputs, so discharge/melt are readable
-        if name == Serialization.SIZE:
-            dest[:] = self._serialized.nbytes
-        else:
-            dest[:] = self.get_value_ptr(name)
+        dest[:] = self.get_value_ptr(name)
 
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
@@ -2854,6 +2851,7 @@ class BmiTopoflowGlacier(BmiBase):
         }
         serialized = pickle.dumps(serializable)
         self._serialized = np.array(bytearray(serialized), dtype=self._serialized.dtype)
+        self._serialized_size[0] = self._serialized.nbytes
 
     def _deserialize(self, arr: NDArray):
         """Load a prior model state from a numpy array of bytes."""
@@ -2867,6 +2865,7 @@ class BmiTopoflowGlacier(BmiBase):
     def _free_serialized(self):
         """Create a new instance of the serialization array, letting the GC free any prior instance."""
         self._serialized = np.array([], Serialization.dtype(Serialization.STATE))
+        self._serialized_size = np.array([0], dtype=Serialization.dtype(Serialization.SIZE))
 
     def _reset_time(self):
         """Reset the current time-based properties to the default value after `initialize` was run.\n
