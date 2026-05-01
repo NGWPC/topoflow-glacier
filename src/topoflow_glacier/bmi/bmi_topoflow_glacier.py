@@ -36,6 +36,10 @@ _dynamic_input_vars = [
     ("land_surface_wind__x_component_of_velocity", "m s-1"),
     ("land_surface_wind__y_component_of_velocity", "m s-1"),
     # ("wind_speed_UV", "m sec-1"),
+
+    ("ngen_realization_start_time", "s"),
+    ("ngen_realization_end_time", "s"),
+    ("ngen_realization_dt", "s"),
 ]
 
 _calib_vars = [
@@ -199,6 +203,14 @@ class BmiTopoflowGlacier(BmiBase):
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
+
+        self._ngen_realization_start_time = None
+        self._ngen_realization_end_time = None
+        self._ngen_realization_dt = None
+        self._ngen_realization_time_applied = False
+
+        # This is required prior to the first log message is issued by t-route.
+        LOG.bind()
 
     @property
     def P(self) -> np.ndarray:
@@ -451,8 +463,6 @@ class BmiTopoflowGlacier(BmiBase):
         self._adapter_start_time_s = 0.0
         self._run_end_time_s = None
         self._adapter_end_time_s = None
-
-        self._apply_realization_time_from_strings()
 
         if not self._adapter_time_configured:
             if self.cfg.start_time is not None and self.cfg.end_time is not None:
@@ -831,15 +841,6 @@ class BmiTopoflowGlacier(BmiBase):
         except ValueError:
             raise ValueError(f"Unrecognized datetime string: {s!r}")
 
-    def adapter_set_realization_times(self, start_iso: str, end_iso: str) -> None:
-        """
-        Called by the NGen BMI adapter (or your driver) BEFORE/AT initialize
-        to provide the realization’s time window.
-        """
-        self._realization_start_str = str(start_iso)
-        self._realization_end_str   = str(end_iso)
-        self._adapter_time_configured = False
-        
     def _recompute_adapter_time_bounds(self, start_dt: datetime, end_dt: datetime) -> None:
         """
         Given concrete datetimes and the already-known dt (seconds), recompute
@@ -878,19 +879,57 @@ class BmiTopoflowGlacier(BmiBase):
             self._run_end_time_s, self._adapter_end_time_s
         )
 
-    def _apply_realization_time_from_strings(self) -> None:
-        """
-        If the realization provided start/end (via adapter_set_realization_times),
-        override any YAML/config times and recompute adapter bounds.
-        """
-        start_s = getattr(self, "_realization_start_str", None)
-        end_s   = getattr(self, "_realization_end_str", None)
-        if not start_s or not end_s:
+    def _datetime_from_epoch_seconds(self, value: float) -> datetime:
+        return pd.to_datetime(float(value), unit="s", utc=True).tz_convert(None).to_pydatetime()
+
+    def _try_apply_ngen_realization_time(self) -> None:
+        if self._ngen_realization_time_applied:
             return
 
-        start_dt = self._parse_iso_like(start_s)
-        end_dt   = self._parse_iso_like(end_s)
+        if (
+            self._ngen_realization_start_time is None
+            or self._ngen_realization_end_time is None
+            or self._ngen_realization_dt is None
+        ):
+            return
+
+        start_epoch = float(self._ngen_realization_start_time)
+        end_epoch = float(self._ngen_realization_end_time)
+        dt_seconds = float(self._ngen_realization_dt)
+
+        if start_epoch <= 0.0 or end_epoch <= 0.0 or dt_seconds <= 0.0:
+            return
+
+        self._ngen_realization_time_applied = True
+
+        self._timestep_size_s = dt_seconds
+        self.dt = dt_seconds
+        self.days_per_dt = self.dt / 86400.0
+
+        start_dt = self._datetime_from_epoch_seconds(start_epoch)
+        end_dt = self._datetime_from_epoch_seconds(end_epoch)
+
         self._recompute_adapter_time_bounds(start_dt, end_dt)
+
+        self._timestep = 0
+        self._t_index = 0
+
+        if hasattr(self, "year"):
+            self.year = self.start_datetime.year
+            self.julian_day = solar.Julian_Day(
+                self.start_datetime.month,
+                self.start_datetime.day,
+                self.start_datetime.hour,
+                year=self.year
+            )
+
+        LOG.info(
+            "TopoFlow-Glacier realization time applied from ngen BMI inputs: "
+            "start=%s end=%s dt=%gs",
+            self.start_datetime,
+            self.end_datetime,
+            self._timestep_size_s
+        )
 
     def get_start_time(self) -> float:
         """BMI: start time in seconds since model epoch (0 for this run)."""
@@ -2472,6 +2511,24 @@ class BmiTopoflowGlacier(BmiBase):
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
         arr = np.asarray(values, dtype="float64").reshape(-1)
+
+        if name == "ngen_realization_start_time":
+            self._ngen_realization_start_time = float(arr[0])
+            self._dynamic_inputs.set_value(name, arr)
+            self._try_apply_ngen_realization_time()
+            return
+
+        if name == "ngen_realization_end_time":
+            self._ngen_realization_end_time = float(arr[0])
+            self._dynamic_inputs.set_value(name, arr)
+            self._try_apply_ngen_realization_time()
+            return
+
+        if name == "ngen_realization_dt":
+            self._ngen_realization_dt = float(arr[0])
+            self._dynamic_inputs.set_value(name, arr)
+            self._try_apply_ngen_realization_time()
+            return
 
         if name == "T_rain_snow":
             # Set calibratable parameters
