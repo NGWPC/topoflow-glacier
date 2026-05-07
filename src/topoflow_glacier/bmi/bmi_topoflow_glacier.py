@@ -299,6 +299,9 @@ class BmiTopoflowGlacier(BmiBase):
         except AttributeError:
             self._recompute_wind_speed()
             return self._uz
+    @uz.setter
+    def uz(self, value):
+        self._uz = value
 
     @property
     def wind_u(self) -> np.ndarray:
