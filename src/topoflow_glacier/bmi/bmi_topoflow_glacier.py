@@ -248,7 +248,7 @@ class BmiTopoflowGlacier(BmiBase):
     @property
     def runoff_depth(self) -> np.ndarray:
         """Getter for the runoff depth (m) variable"""
-        return self.outputs_.value("land_surface_water__runoff_depth")
+        return self._outputs.value("land_surface_water__runoff_depth")
 
     @runoff_depth.setter
     def runoff_depth(self, value: np.ndarray) -> None:
@@ -574,7 +574,7 @@ class BmiTopoflowGlacier(BmiBase):
 
         # If we're already at/after true run end, no-op but snap index to the end.
         run_end = float(getattr(self, "_run_end_time_s", 0.0))
-        if t_now > (run_end - 1e-12):
+        if t_now > (run_end + 1e-12):
             LOG.info("Reached run end (forcing exhausted); no-op update.")
             self._timestep = int(getattr(self, "_n_steps", 0))
             if hasattr(self, "_t_index"):
@@ -845,8 +845,6 @@ class BmiTopoflowGlacier(BmiBase):
         if start_epoch <= 0.0 or end_epoch <= 0.0 or dt_seconds <= 0.0:
             return
 
-        self._ngen_realization_time_applied = True
-
         self._timestep_size_s = dt_seconds
         self.dt = dt_seconds
         self.days_per_dt = self.dt / 86400.0
@@ -859,14 +857,15 @@ class BmiTopoflowGlacier(BmiBase):
         self._timestep = 0
         self._t_index = 0
 
-        if hasattr(self, "year"):
-            self.year = self.start_datetime.year
-            self.julian_day = solar.Julian_Day(
-                self.start_datetime.month,
-                self.start_datetime.day,
-                self.start_datetime.hour,
-                year=self.year
-            )
+        self.year = self.start_datetime.year
+        self.julian_day = solar.Julian_Day(
+            self.start_datetime.month,
+            self.start_datetime.day,
+            self.start_datetime.hour,
+            year=self.year
+        )
+
+        self._ngen_realization_time_applied = True
 
         LOG.info(
             "TopoFlow-Glacier realization time applied from ngen BMI inputs: "
@@ -1446,20 +1445,19 @@ class BmiTopoflowGlacier(BmiBase):
         # -------------------------------------------------------
         # Compute the current datetime from start + offset
         # -------------------------------------------------------
-        self.get_current_datetime(time_units=time_units)
-        self.year = self.start_datetime.year
+        current_datetime = self.get_current_datetime(time_units=time_units)
+        self.year = current_datetime.year
 
         # ----------------------------------
         # Update the *decimal* Julian day
         # ----------------------------------
         self.julian_day = (
-            self.start_datetime.day_of_year
+            current_datetime.day_of_year
             - 1
-            + self.start_datetime.hour / 24
-            + self.start_datetime.minute / 1440
-            + self.start_datetime.second / 86400
+            + current_datetime.hour / 24
+            + current_datetime.minute / 1440
+            + current_datetime.second / 86400
         )
-
         # -------------------------------------------------------
         # Cheap path: no expensive solar geometry if we have SW forcing
         # -------------------------------------------------------
@@ -2648,26 +2646,34 @@ class BmiTopoflowGlacier(BmiBase):
                 "Initial SWE/ice are all zero (h0_swe=h0_snow=h0_iwe=h0_ice=0). "
                 "Without rainfall in forcing, discharge will remain 0."
             )
-
     def get_value_at_indices(self, name: str, dest: np.ndarray, inds: np.ndarray) -> np.ndarray:
         LOG.debug(f"get_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
+
         if hasattr(self, "_outputs") and name in self._outputs:
             return self._outputs.value_at_indices(name, dest, a_inds)
-        if hasattr(self, "_inputs") and name in self._inputs:
-            return self._inputs.value_at_indices(name, dest, a_inds)
+        if hasattr(self, "_dynamic_inputs") and name in self._dynamic_inputs:
+            return self._dynamic_inputs.value_at_indices(name, dest, a_inds)
+        if hasattr(self, "_calibs") and name in self._calibs:
+            return self._calibs.value_at_indices(name, dest, a_inds)
+
         raise KeyError(f"Variable not found: {name}")
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray) -> None:
         LOG.debug(f"set_value_at_indices: {name}")
         a_inds = np.asarray(inds, dtype=int)
         a_src = np.asarray(src)
-        if hasattr(self, "_inputs") and name in self._inputs:
-            self._inputs.set_value_at_indices(name, a_inds, a_src)
+
+        if hasattr(self, "_dynamic_inputs") and name in self._dynamic_inputs:
+            self._dynamic_inputs.set_value_at_indices(name, a_inds, a_src)
+            return
+        if hasattr(self, "_calibs") and name in self._calibs:
+            self._calibs.set_value_at_indices(name, a_inds, a_src)
             return
         if hasattr(self, "_outputs") and name in self._outputs:
             self._outputs.set_value_at_indices(name, a_inds, a_src)
             return
+
         raise KeyError(f"Variable not found: {name}")
 
     def get_value_ptr(self, name: str) -> NDArray:
@@ -2714,58 +2720,20 @@ class BmiTopoflowGlacier(BmiBase):
         """
         return str(self.get_value_ptr(name).dtype)
 
-
-    def get_current_datetime_old(self, time_units="seconds"):
-        """
-        Advance start_datetime by a given offset.
-
-        Returns a pandas.Timestamp.
-
-        Parameters
-        ----------
-        start_datetime : pd.Timestamp | str | datetime
-        time : int | float
-            Amount to advance. Can be fractional for seconds/minutes/hours/days.
-        time_units : {"seconds","minutes","hours","days"}
-        """
-        time = self.dt
-
-        if not isinstance(self.start_datetime, pd.Timestamp):
-            self.start_datetime = pd.to_datetime(self.start_datetime)
-
-        if time_units in ("second", "seconds", "s", "sec"):
-            self.start_datetime += pd.to_timedelta(time, unit="s")
-        elif time_units in ("minute", "minutes", "min"):
-            self.start_datetime += pd.to_timedelta(time, unit="m")
-        elif time_units in ("hour", "hours", "hr", "hrs"):
-            self.start_datetime += pd.to_timedelta(time, unit="h")
-        elif time_units in ("day", "days", "d"):
-            self.start_datetime += pd.to_timedelta(time, unit="d")
-        else:
-            raise ValueError(f"Unsupported time_units: {time_units}")
-
     def get_current_datetime(self, time_units: str = "seconds"):
         """
-        Advance start_datetime by one model time step (dt seconds) and return it.
+        Return current datetime from immutable realization start + current BMI time.
 
-        Notes
-        -----
-        - self.dt is in seconds; we always step in seconds regardless of `time_units`
-          to avoid accidental 3600x jumps when callers pass "hour".
-        - Returns the updated pandas.Timestamp.
+        Do not mutate self.start_datetime here. The realization start time must remain
+        fixed so repeated update() calls do not drift the model clock.
         """
-        # Use the canonical step size in *seconds*
-        step_seconds = float(getattr(self, "_timestep_size_s", self.dt))
-
-        # Ensure we have a pandas.Timestamp
         if not isinstance(self.start_datetime, pd.Timestamp):
             self.start_datetime = pd.to_datetime(self.start_datetime)
 
-        # Always advance in seconds to avoid unit mismatches
-        self.start_datetime = self.start_datetime + pd.to_timedelta(step_seconds, unit="s")
+        current_seconds = float(self.get_current_time())
+        self.current_datetime = self.start_datetime + pd.to_timedelta(current_seconds, unit="s")
 
-        return self.start_datetime
-
+        return self.current_datetime
 
     def get_var_units(self, name: str) -> str:
         units = {
