@@ -42,6 +42,7 @@ _calib_vars = [
 _output_vars = [
     ("snowpack__depth", "m"),
     ("snowpack__liquid-equivalent_depth", "m"),
+    ("snowpack__liquid-equivalent_mass_per_area", "kg m-2"),
     ("snowpack__melt_volume_flux", "m s-1"),
     ("glacier_ice__thickness", "m"),
     ("glacier__liquid_equivalent_depth", "m"),
@@ -339,6 +340,11 @@ class BmiTopoflowGlacier(BmiBase):
         """Copy internal model variables into the BMI output context."""
 
         self._outputs.set_value(
+            "snowpack__liquid-equivalent_mass_per_area",
+            np.asarray(self.h_swe * self.rho_H2O, dtype="float64").reshape(-1),
+        )
+
+        self._outputs.set_value(
             "atmosphere_water__snowfall_leq-volume_flux",
             np.asarray(self.P_snow * 1000.0, dtype="float64").reshape(-1),   # m/s -> mm/s
         )
@@ -473,6 +479,10 @@ class BmiTopoflowGlacier(BmiBase):
         self._outputs.set_value("snowpack__depth", np.array([self.cfg.h0_snow], dtype="float64"))
         self._outputs.set_value("glacier_ice__thickness", np.array([self.cfg.h0_ice], dtype="float64"))
         self._outputs.set_value("snowpack__liquid-equivalent_depth", np.array([self.cfg.h0_swe], dtype="float64"))
+        self._outputs.set_value(
+            "snowpack__liquid-equivalent_mass_per_area",
+            np.array([self.cfg.h0_swe * self.rho_H2O], dtype="float64"),
+        )
         self._outputs.set_value("glacier__liquid_equivalent_depth", np.array([self.cfg.h0_iwe], dtype="float64"))
         self._outputs.set_value("channel_water_x-section__volume_flow_rate", np.array([0.0], dtype="float64"))
         self._outputs.set_value("precipitation_rate", np.array([0.0], dtype="float64"))
@@ -2661,9 +2671,11 @@ class BmiTopoflowGlacier(BmiBase):
         raise KeyError(f"Variable not found: {name}")
 
     def get_value_ptr(self, name: str) -> NDArray:
-        """Gets value in native form if exists in inputs or outputs"""
+        """Gets value in native form if exists in inputs or outputs."""
+
         if name in ("wind_speed_UV", "land_surface_wind__speed"):
             return np.array([self._wind_speed], dtype="float64")
+
         return first_containing(name, self._outputs, self._dynamic_inputs, self._calibs).value(name)
 
     def get_var_itemsize(self, name: str) -> int:
@@ -2778,6 +2790,7 @@ class BmiTopoflowGlacier(BmiBase):
             "snowpack__depth": "m",
             "glacier_ice__thickness": "m",
             "snowpack__liquid-equivalent_depth": "m",
+            "snowpack__liquid-equivalent_mass_per_area": "kg m-2",
             "glacier__liquid_equivalent_depth": "m",
             "precipitation_rate": "mm s-1",
             "channel_water_x-section__volume_flow_rate": "m3 s-1",
