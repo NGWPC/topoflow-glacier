@@ -9,14 +9,52 @@ import sys
 import gc
 from numpy.typing import NDArray
 
-import ewts
-LOG = ewts.get_logger(ewts.TOPOFLOW_GLACIER_ID)
-
 from topoflow_glacier.bmi.bmi_base import BmiBase
 from topoflow_glacier.bmi.config import TopoflowGlacierConfig
 from topoflow_glacier.physics import solar_funcs as solar
 from topoflow_glacier.physics.context import Context, build_context
 
+import logging
+LOG = logging.getLogger("TFGLACR") # IMPORTANT! Use exact string from ewts.modules.TOPOFLOW_GLACIER_ID
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)s - %(funcName)s]: %(message)s',
+)
+
+import os
+
+# NOTE: Helper function to ensure reading env vars
+# When run within ngen some env vars are set from C++ after the 
+# Python interpreter has started.
+# In embedded Python, os.environ may not reflect those changes.
+# getenv_any() falls back to libc getenv() and syncs os.environ.
+def getenv_any(key: str, default: str = "") -> str:
+    """
+    Get an environment variable reliably even when it is set from C/C++
+    after the Python interpreter has started (embedded Python).
+    Prefers os.environ/os.getenv, falls back to libc getenv.
+    """
+    # First try Python's mapping
+    v = os.environ.get(key)
+    if v is not None:
+        return v
+
+    # Fallback: direct libc getenv (sees process env even if Python mapping is stale)
+    try:
+        import ctypes, ctypes.util
+        libc = ctypes.CDLL(ctypes.util.find_library("c"))
+        libc.getenv.restype = ctypes.c_char_p
+        b = libc.getenv(key.encode("utf-8"))
+        if not b:
+            return default
+        s = b.decode("utf-8")
+
+        # Sync back into os.environ so future lookups work normally
+        os.environ[key] = s
+        return s
+    except Exception:
+        return default
+    
 __all__ = ["BmiTopoflowGlacier"]
 
 _dynamic_input_vars = [
@@ -141,12 +179,25 @@ class BmiTopoflowGlacier(BmiBase):
     """BMI composition wrapper for TopoflowGlacier"""
 
     def __init__(self) -> None:
+        # Determine if running within ngen using EWTS. This must be done  
+        # here when the model actually runs vs when it is imported 
+        # into the ngen Python interpreter to ensure the env vars are set.
+        print(f"__init__ Reading EWTS_USE_NGEN_BRIDGE")
+        val = getenv_any("EWTS_USE_NGEN_BRIDGE", "").strip().lower()
+        if val in {"1", "true", "yes", "on"}:
+            print(f"__init__ Found EWTS_USE_NGEN_BRIDGE")
+            try:
+                from ewts.logger import configure_existing_logger
+            except ImportError:
+                LOG.warning("EWTS_USE_NGEN_BRIDGE is set, but EWTS package is not installed. Falling back to default logging.")
+                return
+
+            # Reconfigure logger for EWTS logging
+            configure_existing_logger(LOG)
+
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
-
-        # This is required prior to the first log message is issued by t-route.
-        LOG.bind()
 
     @property
     def P(self) -> np.ndarray:
