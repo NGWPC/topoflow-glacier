@@ -6,6 +6,18 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 
+import logging
+import ewts
+LOG = ewts.get_logger(ewts.TOPOFLOW_GLACIER_ID)
+
+def _ensure(condition: bool, message: str) -> None:
+    """
+    Assert-like guard that logs a FATAL message before raising AssertionError.
+    """
+    if not condition:
+        LOG.critical(message)  # FATAL log before asserting
+        raise AssertionError(message)
+
 class Var(BaseModel):
     """Context variable representation."""
 
@@ -32,7 +44,8 @@ class Context:
 
     def value_at_indices(self, name: str, dest: np.ndarray, indices: np.ndarray) -> np.ndarray:
         """Copies the specific pointer values into a destination array"""
-        assert dest.shape[0] >= indices.shape[0], "dest smaller than indices"
+        # assert dest.shape[0] >= indices.shape[0], "dest smaller than indices"
+        _ensure(dest.shape[0] >= indices.shape[0], "dest smaller than indices")
         src = self.value(name)
         for i in range(indices.shape[0]):
             value_index = indices[i]
@@ -45,7 +58,8 @@ class Context:
 
     def set_value_at_indices(self, name: str, inds: np.ndarray, src: np.ndarray):
         """Sets the specific pointer values into a destination array"""
-        assert src.shape[0] >= inds.shape[0], "inds larger than src"
+        # assert src.shape[0] >= inds.shape[0], "inds larger than src"
+        _ensure(src.shape[0] >= inds.shape[0], "inds larger than src")
         arr = self.value(name)
         for i in range(inds.shape[0]):
             arr[inds[i]] = src[i]
