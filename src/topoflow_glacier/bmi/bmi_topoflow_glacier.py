@@ -22,10 +22,6 @@ try:
     TFGLACR_USE_EWTS = True
 except ImportError:
     TFGLACR_USE_EWTS = False
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)s - %(funcName)s]: %(message)s',
-    )
     
 __all__ = ["BmiTopoflowGlacier"]
 
@@ -146,7 +142,20 @@ def load_static_attributes(cfg: dict[str, Any], state: Context):
         value = cfg[internal_name]
         state.set_value(external_name, bmi_array([value]))
 
+def _configure_stdout_logging():
+    LOG.setLevel(logging.INFO)
 
+    if not LOG.handlers:
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - "
+            "[%(filename)s:%(lineno)s - %(funcName)s]: %(message)s"
+        ))
+        LOG.addHandler(handler)
+
+    LOG.propagate = False
+    
 class BmiTopoflowGlacier(BmiBase):
     """BMI composition wrapper for TopoflowGlacier"""
 
@@ -157,9 +166,12 @@ class BmiTopoflowGlacier(BmiBase):
             # into the ngen Python interpreter to ensure the env vars are set.
             val = getenv_any("EWTS_USE_NGEN_BRIDGE", "").strip().lower()
             if val in {"1", "true", "yes", "on"}:
-                configure_existing_logger(LOG) # Reconfigure logger for EWTS logging
+                configure_existing_logger(LOG)
             else:
-                LOG.warning("EWTS installed but EWTS_USE_NGEN_BRIDGE not on. Falling back to default logging.")
+                _configure_stdout_logging()
+                LOG.warning("EWTS importable but EWTS_USE_NGEN_BRIDGE not on. Falling back to default logging.")
+        else:
+            _configure_stdout_logging()
 
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._calibs = build_context(_calib_vars)
