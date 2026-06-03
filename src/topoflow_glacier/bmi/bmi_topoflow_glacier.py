@@ -9,14 +9,21 @@ import sys
 import gc
 from numpy.typing import NDArray
 
-import ewts
-LOG = ewts.get_logger(ewts.TOPOFLOW_GLACIER_ID)
-
 from topoflow_glacier.bmi.bmi_base import BmiBase
 from topoflow_glacier.bmi.config import TopoflowGlacierConfig
 from topoflow_glacier.physics import solar_funcs as solar
 from topoflow_glacier.physics.context import Context, build_context
 
+from datetime import datetime, timezone
+import logging
+LOG = logging.getLogger("TFGLACR") # IMPORTANT! Use exact string from ewts.modules.TOPOFLOW_GLACIER_ID
+try:
+    from ewts.helper import getenv_any
+    from ewts.logger import configure_existing_logger
+    TFGLACR_USE_EWTS = True
+except ImportError:
+    TFGLACR_USE_EWTS = False
+    
 __all__ = ["BmiTopoflowGlacier"]
 
 _dynamic_input_vars = [
@@ -136,17 +143,62 @@ def load_static_attributes(cfg: dict[str, Any], state: Context):
         value = cfg[internal_name]
         state.set_value(external_name, bmi_array([value]))
 
+class StdoutStyleFormatter(logging.Formatter):
+
+    INFO_FORMAT = (
+        "%(asctime)s %(name)-8s %(levelname)-7s %(message)s"
+    )
+
+    DETAILED_FORMAT = (
+        "%(asctime)s %(name)-8s %(levelname)-7s "
+        "%(message)s "
+        "[%(filename)s.%(funcName)s(L%(lineno)s)]"
+    )
+
+    def format(self, record):
+        if record.levelno == logging.INFO:
+            self._style._fmt = self.INFO_FORMAT
+        else:
+            self._style._fmt = self.DETAILED_FORMAT
+
+        return super().format(record)
+    
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _configure_stdout_logging():
+    LOG.setLevel(logging.INFO)
+
+    if not LOG.handlers:
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(StdoutStyleFormatter())
+        LOG.addHandler(handler)
+
+    LOG.propagate = False
 
 class BmiTopoflowGlacier(BmiBase):
     """BMI composition wrapper for TopoflowGlacier"""
 
     def __init__(self) -> None:
+        if TFGLACR_USE_EWTS:
+            # Determine if running within ngen using EWTS. This must be done  
+            # here when the model actually runs vs when it is imported 
+            # into the ngen Python interpreter to ensure the env vars are set.
+            val = getenv_any("EWTS_USE_NGEN_BRIDGE", "").strip().lower()
+            if val in {"1", "true", "yes", "on"}:
+                configure_existing_logger(LOG)
+            else:
+                _configure_stdout_logging()
+                LOG.warning("ewts package installed but EWTS_USE_NGEN_BRIDGE not on. Falling back to default logging.")
+        else:
+            _configure_stdout_logging()
+
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
-
-        # This is required prior to the first log message is issued by t-route.
-        LOG.bind()
 
     @property
     def P(self) -> np.ndarray:
