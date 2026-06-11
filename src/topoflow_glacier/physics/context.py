@@ -5,10 +5,8 @@ from collections.abc import Iterable, Iterator
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 
-
 import logging
-import ewts
-LOG = ewts.get_logger(ewts.TOPOFLOW_GLACIER_ID)
+LOG = logging.getLogger("TFGLACR")
 
 def _ensure(condition: bool, message: str) -> None:
     """
