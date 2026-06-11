@@ -209,9 +209,6 @@ class BmiTopoflowGlacier(BmiBase):
         self._ngen_realization_dt = None
         self._ngen_realization_time_applied = False
 
-        # This is required prior to the first log message is issued by t-route.
-        LOG.bind()
-
     @property
     def P(self) -> np.ndarray:
         """Getter for the precipitation dynamic input state variable"""
