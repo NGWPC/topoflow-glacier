@@ -7,6 +7,8 @@ import pandas as pd
 import yaml
 import sys
 import gc
+import os
+import time
 from numpy.typing import NDArray
 
 from topoflow_glacier.bmi.bmi_base import BmiBase
@@ -188,8 +190,8 @@ class BmiTopoflowGlacier(BmiBase):
 
     def __init__(self) -> None:
         if TFGLACR_USE_EWTS:
-            # Determine if running within ngen using EWTS. This must be done  
-            # here when the model actually runs vs when it is imported 
+            # Determine if running within ngen using EWTS. This must be done
+            # here when the model actually runs vs when it is imported
             # into the ngen Python interpreter to ensure the env vars are set.
             val = getenv_any("EWTS_USE_NGEN_BRIDGE", "").strip().lower()
             if val in {"1", "true", "yes", "on"}:
@@ -200,14 +202,33 @@ class BmiTopoflowGlacier(BmiBase):
         else:
             _configure_stdout_logging()
 
+        self._ngen_realization_time_applied = False
+        self._ngen_realization_start_time = None
+        self._ngen_realization_end_time = None
+        self._ngen_realization_dt = None
+
         self._dynamic_inputs = build_context(_dynamic_input_vars)
         self._calibs = build_context(_calib_vars)
         self._outputs = build_context(_output_vars)
 
-        self._ngen_realization_start_time = None
-        self._ngen_realization_end_time = None
-        self._ngen_realization_dt = None
-        self._ngen_realization_time_applied = False
+        # Lightweight performance instrumentation.
+        # Default interval logs about 18 progress lines for a 2-year hourly run.
+        # Set TOPOFLOW_GLACIER_PERF_LOG_INTERVAL=0 to disable progress logs.
+        self._perf_rank = (
+            os.environ.get("OMPI_COMM_WORLD_RANK")
+            or os.environ.get("PMI_RANK")
+            or os.environ.get("MPI_RANK")
+            or "unknown"
+        )
+        self._perf_pid = os.getpid()
+        self._perf_log_interval = int(os.environ.get("TOPOFLOW_GLACIER_PERF_LOG_INTERVAL", "1000"))
+        self._perf_initialize_start = None
+        self._perf_initialize_seconds = 0.0
+        self._perf_update_seconds = 0.0
+        self._perf_update_calls = 0
+        self._perf_last_progress_step = -1
+        self._perf_run_start = None
+        self._perf_site_prefix = "unknown"
 
     @property
     def P(self) -> np.ndarray:
@@ -414,6 +435,8 @@ class BmiTopoflowGlacier(BmiBase):
     def initialize(self, config_file: str | Path) -> None:
         """Initialize the BMI model and pre-compute all bookkeeping needed by the adapter."""
         LOG.info("initialize")
+        self._perf_initialize_start = time.perf_counter()
+        self._perf_run_start = self._perf_initialize_start
 
         # --- load config (YAML -> TopoflowGlacierConfig) ---
         with open(config_file) as f:
@@ -603,7 +626,23 @@ class BmiTopoflowGlacier(BmiBase):
         self._sync_internal_outputs()
         LOG.debug(f"Output vars : {self.get_output_var_names()}")
 
-        LOG.info("initialize complete")
+        self._perf_site_prefix = str(getattr(self.cfg, "site_prefix", "unknown"))
+
+        if self._perf_initialize_start is not None:
+            self._perf_initialize_seconds = time.perf_counter() - self._perf_initialize_start
+
+        LOG.info(
+            "TopoFlow-Glacier initialize complete: "
+            f"site_prefix={self._perf_site_prefix}, "
+            f"rank={self._perf_rank}, "
+            f"pid={self._perf_pid}, "
+            f"dt_seconds={float(self.dt):.3f}, "
+            f"n_steps={int(getattr(self, '_n_steps', -1))}, "
+            f"run_end_seconds={float(getattr(self, '_run_end_time_s', -1.0)):.3f}, "
+            f"area_km2={float(getattr(self, 'da_km2', -1.0)):.6f}, "
+            f"initialize_seconds={self._perf_initialize_seconds:.6f}, "
+            f"progress_log_interval={self._perf_log_interval}"
+        )
 
     def _init_three_day_snow_buffer(self) -> None:
         """
@@ -618,91 +657,115 @@ class BmiTopoflowGlacier(BmiBase):
         """Advance exactly one dt without exceeding run end; safe for adapter fencepost."""
         LOG.debug("update")
 
-        if not self._adapter_time_configured:
-            raise RuntimeError("TopoFlow-Glacier: realization time not set before update")
+        perf_step_start = time.perf_counter()
 
-        dt = float(self.get_time_step())
-        t_now = self.get_current_time()
-
-        # If we're already at/after true run end, no-op but snap index to the end.
-        run_end = float(getattr(self, "_run_end_time_s", 0.0))
-        if t_now > (run_end + 1e-12):
-            LOG.info("Reached run end (forcing exhausted); no-op update.")
-            self._timestep = int(getattr(self, "_n_steps", 0))
-            if hasattr(self, "_t_index"):
-                self._t_index = int(getattr(self, "_n_steps", 0))
-            return
-
-        # -------------------------
-        # Meteorology / Energy part
-        # -------------------------
-        self.update_atm_pressure_from_elevation(T_C=True, MBAR=True)
-        self.update_P_integral()
-        self.update_P_max()
-        self.update_P_rain()
-        self.update_P_snow()
-        self.update_P_rain_integral()
-        self.update_P_snow_integral()
-        self.update_saturation_vapor_pressure(MBAR=True)
-        self.update_vapor_pressure_from_spHum_AirPre(MBAR=True)
-        self.update_RH()
-        self.update_dew_point()
-        self.update_T_surf()
-        self.update_saturation_vapor_pressure(MBAR=True, SURFACE=True)
-        self.update_bulk_richardson_number()
-        self.update_bulk_aero_conductance()
-        self.update_sensible_heat_flux()
-        self.update_precipitable_water_content()
-        self.update_vapor_pressure(SURFACE=True)
-        self.update_latent_heat_flux()
-        self.update_conduction_heat_flux()
-        self.update_advection_heat_flux()
-        self.update_julian_day()  # Run using seconds
-        self.update_albedo(method="aging")
-        self.set_aspect_angle()
-        self.set_slope_angle()
-        self.update_net_shortwave_radiation()
-        self.update_em_air()
-        self.update_net_longwave_radiation()
-        self.update_net_energy_flux()
-
-        # -------------------------
-        # Snow & Ice melt
-        # -------------------------
-        self.extract_previous_swe()
-        self.extract_previous_snow_depth()
-        self.update_snow_meltrate()  # (meltrate = SM)
-        self.enforce_max_snow_meltrate()  # (before SM integral!)
-        self.update_SM_integral()
-        self.update_swe()
-        self.update_snowfall_cold_content()
-        self.update_ice_meltrate()
-        self.enforce_max_ice_meltrate()
-        self.update_IM_integral()
-        self.update_iwe()  # relies on previous timestep's swe value
-        self.update_combined_meltrate()
-        self.update_ws_density_ratio()
-        self.update_snow_depth()  
-        self.update_wi_density_ratio()
-        self.update_ice_depth()
-        self.update_snowpack_cold_content()
-        self._sync_internal_outputs()
-
-        # advance index AFTER computing step diagnostics
-        self._timestep += 1
-        self._t_index += 1
-
-        # best-effort debug line for one-cell runs
         try:
-            LOG.debug(
-                "Qsum=%.3f W/m2, SM=%.6e m/s, IM=%.6e m/s, P_rain=%.6e m/s",
-                float(np.asarray(self.Q_sum).reshape(-1)[0]),
-                float(np.asarray(self.SM).reshape(-1)[0]),
-                float(np.asarray(self.IM).reshape(-1)[0]),
-                float(np.asarray(self.P_rain).reshape(-1)[0]),
-            )
-        except Exception:
-            pass
+            dt = float(self.get_time_step())
+            t_now = self.get_current_time()
+
+            # If we're already at/after true run end, no-op but snap index to the end.
+            run_end = float(getattr(self, "_run_end_time_s", 0.0))
+            if t_now > (run_end - 1e-12):
+                LOG.info("Reached run end (forcing exhausted); no-op update.")
+                self._timestep = int(getattr(self, "_n_steps", 0))
+                if hasattr(self, "_t_index"):
+                    self._t_index = int(getattr(self, "_n_steps", 0))
+                return
+
+            # -------------------------
+            # Meteorology / Energy part
+            # -------------------------
+            self.update_atm_pressure_from_elevation(T_C=True, MBAR=True)
+            self.update_P_integral()
+            self.update_P_max()
+            self.update_P_rain()
+            self.update_P_snow()
+            self.update_P_rain_integral()
+            self.update_P_snow_integral()
+            self.update_saturation_vapor_pressure(MBAR=True)
+            self.update_vapor_pressure_from_spHum_AirPre(MBAR=True)
+            self.update_RH()
+            self.update_dew_point()
+            self.update_T_surf()
+            self.update_saturation_vapor_pressure(MBAR=True, SURFACE=True)
+            self.update_bulk_richardson_number()
+            self.update_bulk_aero_conductance()
+            self.update_sensible_heat_flux()
+            self.update_precipitable_water_content()
+            self.update_vapor_pressure(SURFACE=True)
+            self.update_latent_heat_flux()
+            self.update_conduction_heat_flux()
+            self.update_advection_heat_flux()
+            self.update_julian_day()  # Run using seconds
+            self.update_albedo(method="aging")
+            self.set_aspect_angle()
+            self.set_slope_angle()
+            self.update_net_shortwave_radiation()
+            self.update_em_air()
+            self.update_net_longwave_radiation()
+            self.update_net_energy_flux()
+
+            # -------------------------
+            # Snow & Ice melt
+            # -------------------------
+            self.extract_previous_swe()
+            self.extract_previous_snow_depth()
+            self.update_snow_meltrate()  # (meltrate = SM)
+            self.enforce_max_snow_meltrate()  # (before SM integral!)
+            self.update_SM_integral()
+            self.update_swe()
+            self.update_snowfall_cold_content()
+            self.update_ice_meltrate()
+            self.enforce_max_ice_meltrate()
+            self.update_IM_integral()
+            self.update_iwe()  # relies on previous timestep's swe value
+            self.update_combined_meltrate()
+            self.update_ws_density_ratio()
+            self.update_snow_depth()
+            self.update_wi_density_ratio()
+            self.update_ice_depth()
+            self.update_snowpack_cold_content()
+            self._sync_internal_outputs()
+
+            # advance index AFTER computing step diagnostics
+            self._timestep += 1
+            self._t_index += 1
+
+            # best-effort debug line for one-cell runs
+            try:
+                LOG.debug(
+                    "Qsum=%.3f W/m2, SM=%.6e m/s, IM=%.6e m/s, P_rain=%.6e m/s",
+                    float(np.asarray(self.Q_sum).reshape(-1)[0]),
+                    float(np.asarray(self.SM).reshape(-1)[0]),
+                    float(np.asarray(self.IM).reshape(-1)[0]),
+                    float(np.asarray(self.P_rain).reshape(-1)[0]),
+                )
+            except Exception:
+                pass
+
+        finally:
+            elapsed = time.perf_counter() - perf_step_start
+            self._perf_update_seconds += elapsed
+            self._perf_update_calls += 1
+
+            interval = int(getattr(self, "_perf_log_interval", 0))
+            step = int(getattr(self, "_timestep", 0))
+            n_steps = int(getattr(self, "_n_steps", 0))
+
+            if interval > 0 and step > 0 and step % interval == 0 and step != self._perf_last_progress_step:
+                self._perf_last_progress_step = step
+                avg_update_seconds = self._perf_update_seconds / max(self._perf_update_calls, 1)
+                LOG.info(
+                    "TopoFlow-Glacier progress: "
+                    f"site_prefix={getattr(self, '_perf_site_prefix', 'unknown')}, "
+                    f"rank={getattr(self, '_perf_rank', 'unknown')}, "
+                    f"pid={getattr(self, '_perf_pid', 'unknown')}, "
+                    f"step={step}/{n_steps}, "
+                    f"current_time_seconds={float(getattr(self, '_time', self.get_current_time())):.3f}, "
+                    f"last_update_seconds={elapsed:.6f}, "
+                    f"avg_update_seconds={avg_update_seconds:.6f}, "
+                    f"total_update_seconds={self._perf_update_seconds:.6f}"
+                )
 
     def finalize(self) -> None:
         """
@@ -720,6 +783,32 @@ class BmiTopoflowGlacier(BmiBase):
         # Mark as finalized **first** so even if something below goes wrong
         # we won't re-enter from a second call.
         self._finalized = True
+
+        try:
+            total_wall_seconds = (
+                time.perf_counter() - self._perf_run_start
+                if getattr(self, "_perf_run_start", None) is not None
+                else -1.0
+            )
+            avg_update_seconds = (
+                self._perf_update_seconds / self._perf_update_calls
+                if self._perf_update_calls
+                else 0.0
+            )
+            LOG.info(
+                "TopoFlow-Glacier performance summary: "
+                f"site_prefix={getattr(self, '_perf_site_prefix', 'unknown')}, "
+                f"rank={getattr(self, '_perf_rank', 'unknown')}, "
+                f"pid={getattr(self, '_perf_pid', 'unknown')}, "
+                f"initialize_seconds={getattr(self, '_perf_initialize_seconds', 0.0):.6f}, "
+                f"update_calls={getattr(self, '_perf_update_calls', 0)}, "
+                f"total_update_seconds={getattr(self, '_perf_update_seconds', 0.0):.6f}, "
+                f"avg_update_seconds={avg_update_seconds:.6f}, "
+                f"total_wall_seconds={total_wall_seconds:.6f}, "
+                f"n_steps={int(getattr(self, '_n_steps', -1))}"
+            )
+        except Exception:
+            pass
 
         # Best-effort: if the interpreter is in the middle of shutting down,
         # avoid touching anything complicated (logging, numpy, etc.).
