@@ -301,17 +301,30 @@ class BmiTopoflowGlacier(BmiBase):
             return self._uz
     @uz.setter
     def uz(self, value):
-        self._uz = value
+        if isinstance(value, (int, float)):
+            self._uz = np.array([value], dtype=np.float64)
+        else:
+            self._uz = np.array(value, copy=True, dtype=np.float64)
 
     @property
     def wind_u(self) -> np.ndarray:
         """Wind-speed magnitude in the X direction."""
         return self._dynamic_inputs.value("land_surface_wind__x_component_of_velocity")
+    @wind_u.setter
+    def wind_u(self, value):
+        if isinstance(value, (int, float)):
+            value = np.array([value], dtype=np.float64)
+        self._dynamic_inputs.set_value("land_surface_wind__x_component_of_velocity", value)
 
     @property
     def wind_v(self) -> np.ndarray:
         """Wind-speed magnitude in the Y direction."""
         return self._dynamic_inputs.value("land_surface_wind__y_component_of_velocity")
+    @wind_v.setter
+    def wind_v(self, value):
+        if isinstance(value, (int, float)):
+            value = np.array([value], dtype=np.float64)
+        self._dynamic_inputs.set_value("land_surface_wind__y_component_of_velocity", value)
 
     @property
     def runoff_depth(self) -> np.ndarray:
@@ -592,11 +605,6 @@ class BmiTopoflowGlacier(BmiBase):
             self.start_datetime.hour,
             year=self.year
         )
-
-        # --- wind state ---
-        self._wind_u = 0.0
-        self._wind_v = 0.0
-        self._wind_speed = 0.0
 
         # --- previous storages ---
         self.previous_swe = np.array(self.h_swe, dtype="float64").copy()
@@ -1021,7 +1029,7 @@ class BmiTopoflowGlacier(BmiBase):
         raise ValueError(f"Unrecognized datetime format: {s!r}")
 
     def _recompute_wind_speed(self) -> None:
-        self._uz = (self.wind_u ** 2 + self.wind_v ** 2) ** 0.5
+        self.uz = (self.wind_u ** 2 + self.wind_v ** 2) ** 0.5
 
     def update_atm_pressure_from_elevation(self, T_C=True, MBAR=False):
         """
@@ -2562,7 +2570,7 @@ class BmiTopoflowGlacier(BmiBase):
             return
 
         if name in {"wind_speed_UV", "land_surface_wind__speed"}:
-            self.uz[:] = values
+            self.uz = values
             return
 
         if name == "atmosphere_water__liquid_equivalent_precipitation_rate":
@@ -2701,8 +2709,12 @@ class BmiTopoflowGlacier(BmiBase):
     def get_value_ptr(self, name: str) -> NDArray:
         """Gets value in native form if exists in inputs or outputs."""
 
-        if name in ("wind_speed_UV", "land_surface_wind__speed"):
-            return np.array([self._wind_speed], dtype="float64")
+        if name == "wind_speed_UV" or name == "land_surface_wind__speed":
+            return self.uz
+        if name == Serialization.STATE:
+            return self._serialized
+        if Serialization.dtype(name) is not None:
+            return self._serialized_size
 
         return first_containing(name, self._outputs, self._dynamic_inputs, self._calibs).value(name)
 
