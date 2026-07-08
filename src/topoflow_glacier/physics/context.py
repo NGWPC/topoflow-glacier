@@ -1,5 +1,5 @@
 """A file to hold classes relating to the model's context, or "state". This idea is related to how the internal variables of a model can be imported/exported/saved."""
-
+from __future__ import annotations
 from collections.abc import Iterable, Iterator
 
 import numpy as np
@@ -61,6 +61,16 @@ class Context:
         arr = self.value(name)
         for i in range(inds.shape[0]):
             arr[inds[i]] = src[i]
+
+    def serializable(self) -> dict[str, np.ndarray]:
+        """Create a `dict` of var name-value pairs that is capable of being serialized with `pickle.dumps`.\n
+        Currently assumes only the `value` attribute on `Var` needs to be saved."""
+        return { name: var.value for name, var in self._name_mapping.items() }
+
+    def load_serialized(self, data: dict[str, np.ndarray]):
+        """Read a `dict` of var name-value pairs."""
+        for name, value in data.items():
+            self.set_value(name, value)
 
     def names(self) -> Iterable[str]:
         """Returns an iterator for all variables in the model state"""
