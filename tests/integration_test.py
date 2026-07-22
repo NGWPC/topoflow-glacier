@@ -58,7 +58,7 @@ def test_environment(tmp_path, sample_config, sample_forcing_data):
 
 @pytest.fixture
 def sample_outputs():
-    return np.load(here() / "tests/data/output_m_total.npy").astype(np.float64)
+    return np.astype(np.load(here() / "tests/data/output_m_total.npy"), np.float64)
 
 
 class TestTopoflowGlacierIntegration:
@@ -72,12 +72,10 @@ class TestTopoflowGlacierIntegration:
         model.initialize(str(config_file))
 
         dest_array = np.zeros(1)
-        model.get_value("snowpack__depth", dest_array)
-        initial_snow = dest_array.item()
+        initial_snow = model.get_value("snowpack__depth", dest_array).item()
         assert initial_snow == 5.0
 
-        model.get_value("glacier_ice__thickness", dest_array)
-        initial_ice = dest_array.item()
+        initial_ice = model.get_value("glacier_ice__thickness", dest_array).item()
         assert initial_ice == 2.0
 
         forcing_df["Time"] = pd.to_datetime(forcing_df["Time"])
@@ -120,24 +118,20 @@ class TestTopoflowGlacierIntegration:
             model.update()
 
             dest_array = np.zeros(1)
-            model.get_value("snowpack__melt_volume_flux", dest_array)
-            snow_melt = dest_array.item()
-
+            snow_melt = model.get_value("snowpack__melt_volume_flux", dest_array).item()
             output_snow_melt[i : i + 1] = dest_array
             assert snow_melt >= 0  # Melt rate should be non-negative
 
-            model.get_value("glacier_ice__melt_volume_flux", dest_array)
-            ice_melt = dest_array.item()
+            ice_melt = model.get_value("glacier_ice__melt_volume_flux", dest_array).item()
             output_ice_melt[i : i + 1] = dest_array
             assert ice_melt >= 0  # Melt rate should be non-negative
 
-            model.get_value("snowpack__depth", dest_array)
-            h_snow = dest_array.item()
+            h_snow = model.get_value("snowpack__depth", dest_array).item()
             output_h_snow[i : i + 1] = dest_array
             assert h_snow >= 0  # Snow depth should be non-negative
 
+            h_ice = model.get_value("glacier_ice__thickness", dest_array).item()
             model.get_value("glacier_ice__thickness", dest_array)
-            h_ice = dest_array.item()
             assert h_ice >= 0  # Ice thickness should be non-negative
 
             dest_array = np.zeros(1)
@@ -156,13 +150,7 @@ class TestTopoflowGlacierIntegration:
 
         output_m_total = output_m_total * model.da_m2  # converting m/sec melt to m3/sec
         print(output_m_total.sum())
-        assert np.allclose(
-            sample_outputs,
-            output_m_total,
-            rtol=1e-3,
-            atol=1e-6,
-        ), "outputs not containing expected values"
-
+        assert np.array_equal(sample_outputs, output_m_total), "outputs not containing expected values"
 
     def test_bmi_variable_access(self, test_environment):
         """Test BMI variable getter and setter methods."""
@@ -195,6 +183,43 @@ class TestTopoflowGlacierIntegration:
         model.get_value("land_surface_air__temperature", retrieved)
         assert np.allclose(retrieved, test_value)
 
+        model.finalize()
+
+    def test_bmi_indexed_value_access(self, test_environment):
+        """Indexed BMI access works for both dynamic inputs and outputs."""
+        config_file, _ = test_environment
+        model = BmiTopoflowGlacier()
+        model.initialize(str(config_file))
+
+        input_name = "land_surface_air__temperature"
+        output_name = "snowpack__depth"
+        inds = np.array([0], dtype=np.int64)
+
+        model.set_value_at_indices(input_name, inds, np.array([7.5]))
+        input_dest = np.empty(1)
+        returned_input = model.get_value_at_indices(input_name, input_dest, inds)
+        assert returned_input is input_dest
+        assert np.array_equal(input_dest, np.array([7.5]))
+
+        model.set_value_at_indices(output_name, inds, np.array([3.25]))
+        output_dest = np.empty(1)
+        returned_output = model.get_value_at_indices(output_name, output_dest, inds)
+        assert returned_output is output_dest
+        assert np.array_equal(output_dest, np.array([3.25]))
+
+        model.finalize()
+
+    def test_get_value_returns_destination_array(self, test_environment):
+        """BMI get_value always returns the populated destination array."""
+        config_file, _ = test_environment
+        model = BmiTopoflowGlacier()
+        model.initialize(str(config_file))
+
+        dest = np.empty(1)
+        returned = model.get_value("snowpack__depth", dest)
+
+        assert returned is dest
+        assert np.array_equal(dest, np.array([5.0]))
         model.finalize()
 
 
@@ -246,11 +271,9 @@ class TestTopoflowGlacierEdgeCases:
 
         # Should have zero melt when there's no snow or ice
         dest_array = np.zeros(1)
-        model.get_value("snowpack__melt_volume_flux", dest_array)
-        snow_melt = dest_array.item()
+        snow_melt = model.get_value("snowpack__melt_volume_flux", dest_array).item()
+        ice_melt = model.get_value("glacier_ice__melt_volume_flux", dest_array).item()
 
-        model.get_value("glacier_ice__melt_volume_flux", dest_array)
-        ice_melt = dest_array.item()
         assert snow_melt == 0.0
         assert ice_melt == 0.0
 
