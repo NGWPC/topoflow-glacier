@@ -2505,6 +2505,7 @@ class BmiTopoflowGlacier(BmiBase):
         """BMI get_value: copy variable 'name' into provided 'dest' array."""
         # Prefer outputs first, then inputs, so discharge/melt are readable
         dest[:] = self.get_value_ptr(name)
+        return dest
 
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
