@@ -2501,10 +2501,11 @@ class BmiTopoflowGlacier(BmiBase):
         LOG.debug("get_output_var_names")
         return list(self._outputs.names())
 
-    def get_value(self, name: str, dest) -> None:
+    def get_value(self, name: str, dest: np.ndarray) -> np.ndarray:
         """BMI get_value: copy variable 'name' into provided 'dest' array."""
         # Prefer outputs first, then inputs, so discharge/melt are readable
         dest[:] = self.get_value_ptr(name)
+        return dest
 
     def set_value(self, name: str, values) -> None:
         """BMI set_value: assign into BMI variable 'name' from 'values' array."""
