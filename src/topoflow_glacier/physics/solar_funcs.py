@@ -121,8 +121,7 @@ import pandas as pd
 from timezonefinder import TimezoneFinder
 
 import logging
-import ewts
-LOG = ewts.get_logger(ewts.TOPOFLOW_GLACIER_ID)
+LOG = logging.getLogger("TFGLACR")
 
 tf = TimezoneFinder()
 
