@@ -864,7 +864,7 @@ class BmiTopoflowGlacier(BmiBase):
         if dt <= 0.0:
             raise ValueError("Time step (dt) must be positive before setting time bounds.")
 
-        if end_dt <= start_dt:
+        if end_dt < start_dt:
             raise ValueError("End time must be strictly after start time.")
 
         total_seconds = float((end_dt - start_dt).total_seconds())
